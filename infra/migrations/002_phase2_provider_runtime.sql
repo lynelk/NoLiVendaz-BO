@@ -32,7 +32,8 @@ CREATE TABLE webhook_events (
 CREATE UNIQUE INDEX webhook_events_external_id_unique
   ON webhook_events(connector_id, external_event_id)
   WHERE external_event_id IS NOT NULL;
-CREATE INDEX webhook_events_hash_idx ON webhook_events(connector_id, payload_hash);
+CREATE UNIQUE INDEX webhook_events_payload_hash_unique
+  ON webhook_events(connector_id, payload_hash);
 CREATE INDEX webhook_events_received_idx ON webhook_events(received_at DESC);
 
 CREATE TABLE provider_health_events (
@@ -46,6 +47,7 @@ CREATE TABLE provider_health_events (
   details jsonb NOT NULL DEFAULT '{}'::jsonb,
   checked_at timestamptz NOT NULL DEFAULT now()
 );
+
 CREATE INDEX provider_health_connector_time_idx
   ON provider_health_events(connector_id, checked_at DESC);
 
