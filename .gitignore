@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+.next/
+dist/
+build/
+coverage/
+.turbo/
+
+# environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# logs
+*.log
+logs/
+
+# local databases / runtime
+*.sqlite
+*.sqlite3
+.tmp/
+tmp/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# misc
+*.tsbuildinfo
