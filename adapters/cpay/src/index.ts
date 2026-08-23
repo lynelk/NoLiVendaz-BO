@@ -1,4 +1,200 @@
-import type { ConnectorRecord,TransactionStatus } from "@nolivendaz/canonical-models";
-import { type NormalizedProviderEvent,type ProviderHealthResult,type ProviderTransaction,type SecretResolver,type VendRequest,type VendResponse,type VendingProviderAdapter,getByPath,interpolatePath,normalizeVendStatus,parseRuntimeConfiguration,requestJson,verifyHmacWebhook } from "@nolivendaz/provider-sdk";
-const txStatus=(s:VendResponse["status"]):TransactionStatus=>s==="FULFILLED"?"FULFILLED":s==="FAILED"?"FAILED":s==="UNKNOWN"?"UNKNOWN":s==="CANCELLED"?"CANCELLED":s==="ACCEPTED"?"ACCEPTED":"SUBMITTED";
-export class CPayAdapter implements VendingProviderAdapter{readonly connector:ConnectorRecord;constructor(connector:ConnectorRecord,private readonly secrets:SecretResolver){this.connector=connector;}async getCapabilities(){const e=parseRuntimeConfiguration(this.connector).endpoints;return[{code:"vend.initiate"},{code:"vend.status"},{code:"transaction.query"},{code:"webhook.receive"},...(e.initiateRefund?[{code:"refund.create"}]:[]),...(e.getRefundStatus?[{code:"refund.status"}]:[]),...(e.resendToken?[{code:"token.resend"}]:[])];}async healthCheck():Promise<ProviderHealthResult>{const runtime=parseRuntimeConfiguration(this.connector);if(!runtime.endpoints.health)return{status:"UNKNOWN",checkedAt:new Date().toISOString(),details:{reason:"HEALTH_ENDPOINT_NOT_CONFIGURED"}};try{const r=await requestJson(this.connector,this.secrets,runtime,"GET",runtime.endpoints.health);return{status:"HEALTHY",latencyMs:r.latencyMs,checkedAt:new Date().toISOString()};}catch(error){return{status:"OUTAGE",checkedAt:new Date().toISOString(),details:{error:error instanceof Error?error.message:"UNKNOWN"}};}}async initiateVend(request:VendRequest){const runtime=parseRuntimeConfiguration(this.connector);const r=await requestJson(this.connector,this.secrets,runtime,"POST",runtime.endpoints.initiateVend,request);return this.toVend(r.body);}async getVendStatus(reference:string){const runtime=parseRuntimeConfiguration(this.connector);const r=await requestJson(this.connector,this.secrets,runtime,"GET",interpolatePath(runtime.endpoints.getVendStatus,{reference}));return this.toVend(r.body,reference);}async getTransaction(reference:string):Promise<ProviderTransaction>{const runtime=parseRuntimeConfiguration(this.connector);const r=await requestJson(this.connector,this.secrets,runtime,"GET",interpolatePath(runtime.endpoints.getTransaction??runtime.endpoints.getVendStatus,{reference}));const v=this.toVend(r.body,reference);return{providerTransactionId:v.providerTransactionId,transactionStatus:txStatus(v.status),vendStatus:v.status,...(v.providerStatus?{providerStatus:v.providerStatus}:{})};}async verifyWebhook(h:Record<string,string|string[]|undefined>,b:string){return verifyHmacWebhook(this.connector,this.secrets,h,b);}async normalizeWebhook(payload:unknown):Promise<NormalizedProviderEvent[]>{return[this.toEvent(payload,"cpay")];}private toEvent(payload:unknown,prefix:string):NormalizedProviderEvent{const runtime=parseRuntimeConfiguration(this.connector),f=runtime.fields??{};const obj=payload&&typeof payload==="object"?payload as Record<string,unknown>:{value:payload};const id=getByPath(payload,f.eventId),type=getByPath(payload,f.eventType),occurred=getByPath(payload,f.occurredAt),correlation=getByPath(payload,f.correlationId),providerTx=getByPath(payload,f.eventProviderTransactionId??f.providerTransactionId),providerStatus=getByPath(payload,f.providerStatus),rawVend=getByPath(payload,f.vendStatus??f.providerStatus);const eventType=typeof type==="string"?type:"provider.event";const mapped=runtime.eventStatusMap?.[eventType];const vendStatus=mapped??(typeof rawVend==="string"?normalizeVendStatus(rawVend,runtime.statusMap):undefined);return{id:typeof id==="string"?id:`${prefix}-${Date.now()}`,type:eventType,occurredAt:typeof occurred==="string"?occurred:new Date().toISOString(),...(typeof correlation==="string"?{correlationId:correlation}:{}),...(typeof providerTx==="string"?{providerTransactionId:providerTx}:{}),...(vendStatus?{vendStatus}:{}),...(typeof providerStatus==="string"?{providerStatus}:{}),payload:obj};}private toVend(body:unknown,fallback?:string):VendResponse{const runtime=parseRuntimeConfiguration(this.connector),f=runtime.fields??{};const providerId=getByPath(body,f.providerTransactionId),raw=getByPath(body,f.vendStatus??f.providerStatus),providerStatus=getByPath(body,f.providerStatus),fulfilment=getByPath(body,f.fulfilment);return{providerTransactionId:typeof providerId==="string"?providerId:fallback??"UNKNOWN",status:normalizeVendStatus(raw,runtime.statusMap),...(typeof providerStatus==="string"?{providerStatus}:{}),...(fulfilment&&typeof fulfilment==="object"?{fulfilment:fulfilment as Record<string,unknown>}:{})};}}
+import type {
+  ConnectorRecord,
+  TransactionStatus
+} from "@nolivendaz/canonical-models";
+import {
+  type NormalizedProviderEvent,
+  type ProviderHealthResult,
+  type ProviderTransaction,
+  type SecretResolver,
+  type VendRequest,
+  type VendResponse,
+  type VendingProviderAdapter,
+  getByPath,
+  interpolatePath,
+  normalizeVendStatus,
+  parseRuntimeConfiguration,
+  requestJson,
+  verifyHmacWebhook
+} from "@nolivendaz/provider-sdk";
+
+function transactionStatus(status: VendResponse["status"]): TransactionStatus {
+  if (status === "FULFILLED") return "FULFILLED";
+  if (status === "FAILED") return "FAILED";
+  if (status === "UNKNOWN") return "UNKNOWN";
+  if (status === "CANCELLED") return "CANCELLED";
+  if (status === "ACCEPTED") return "ACCEPTED";
+  return "SUBMITTED";
+}
+
+export class CPayAdapter implements VendingProviderAdapter {
+  readonly connector: ConnectorRecord;
+
+  constructor(
+    connector: ConnectorRecord,
+    private readonly secrets: SecretResolver
+  ) {
+    this.connector = connector;
+  }
+
+  async getCapabilities() {
+    // These are the operations implemented by this adapter today. Additional
+    // CPay capabilities are exposed only when the corresponding methods exist.
+    return [
+      { code: "vend.initiate" },
+      { code: "vend.status" },
+      { code: "transaction.query" },
+      { code: "webhook.receive" }
+    ];
+  }
+
+  async healthCheck(): Promise<ProviderHealthResult> {
+    const runtime = parseRuntimeConfiguration(this.connector);
+    if (!runtime.endpoints.health) {
+      return {
+        status: "UNKNOWN",
+        checkedAt: new Date().toISOString(),
+        details: { reason: "HEALTH_ENDPOINT_NOT_CONFIGURED" }
+      };
+    }
+
+    try {
+      const result = await requestJson(
+        this.connector,
+        this.secrets,
+        runtime,
+        "GET",
+        runtime.endpoints.health
+      );
+      return {
+        status: "HEALTHY",
+        latencyMs: result.latencyMs,
+        checkedAt: new Date().toISOString()
+      };
+    } catch (error) {
+      return {
+        status: "OUTAGE",
+        checkedAt: new Date().toISOString(),
+        details: {
+          error: error instanceof Error ? error.message : "UNKNOWN"
+        }
+      };
+    }
+  }
+
+  async initiateVend(request: VendRequest): Promise<VendResponse> {
+    const runtime = parseRuntimeConfiguration(this.connector);
+    const result = await requestJson(
+      this.connector,
+      this.secrets,
+      runtime,
+      "POST",
+      runtime.endpoints.initiateVend,
+      request
+    );
+    return this.toVendResponse(result.body);
+  }
+
+  async getVendStatus(reference: string): Promise<VendResponse> {
+    const runtime = parseRuntimeConfiguration(this.connector);
+    const result = await requestJson(
+      this.connector,
+      this.secrets,
+      runtime,
+      "GET",
+      interpolatePath(runtime.endpoints.getVendStatus, { reference })
+    );
+    return this.toVendResponse(result.body, reference);
+  }
+
+  async getTransaction(reference: string): Promise<ProviderTransaction> {
+    const runtime = parseRuntimeConfiguration(this.connector);
+    const endpoint = runtime.endpoints.getTransaction ?? runtime.endpoints.getVendStatus;
+    const result = await requestJson(
+      this.connector,
+      this.secrets,
+      runtime,
+      "GET",
+      interpolatePath(endpoint, { reference })
+    );
+    const vend = this.toVendResponse(result.body, reference);
+    return {
+      providerTransactionId: vend.providerTransactionId,
+      transactionStatus: transactionStatus(vend.status),
+      vendStatus: vend.status,
+      ...(vend.providerStatus ? { providerStatus: vend.providerStatus } : {})
+    };
+  }
+
+  async verifyWebhook(
+    headers: Record<string, string | string[] | undefined>,
+    rawBody: string
+  ): Promise<boolean> {
+    return verifyHmacWebhook(this.connector, this.secrets, headers, rawBody);
+  }
+
+  async normalizeWebhook(payload: unknown): Promise<NormalizedProviderEvent[]> {
+    const runtime = parseRuntimeConfiguration(this.connector);
+    const fields = runtime.fields ?? {};
+    const objectPayload = payload && typeof payload === "object"
+      ? payload as Record<string, unknown>
+      : { value: payload };
+
+    const id = getByPath(payload, fields.eventId);
+    const type = getByPath(payload, fields.eventType);
+    const occurredAt = getByPath(payload, fields.occurredAt);
+    const correlationId = getByPath(payload, fields.correlationId);
+    const providerTransactionId = getByPath(
+      payload,
+      fields.eventProviderTransactionId ?? fields.providerTransactionId
+    );
+    const providerStatus = getByPath(payload, fields.providerStatus);
+    const rawVendStatus = getByPath(
+      payload,
+      fields.vendStatus ?? fields.providerStatus
+    );
+
+    const eventType = typeof type === "string" ? type : "provider.event";
+    const configuredEventStatus = runtime.eventStatusMap?.[eventType];
+    const vendStatus = configuredEventStatus ?? (
+      typeof rawVendStatus === "string"
+        ? normalizeVendStatus(rawVendStatus, runtime.statusMap)
+        : undefined
+    );
+
+    return [{
+      id: typeof id === "string" ? id : `cpay-${Date.now()}`,
+      type: eventType,
+      occurredAt: typeof occurredAt === "string"
+        ? occurredAt
+        : new Date().toISOString(),
+      ...(typeof correlationId === "string" ? { correlationId } : {}),
+      ...(typeof providerTransactionId === "string"
+        ? { providerTransactionId }
+        : {}),
+      ...(vendStatus ? { vendStatus } : {}),
+      ...(typeof providerStatus === "string" ? { providerStatus } : {}),
+      payload: objectPayload
+    }];
+  }
+
+  private toVendResponse(body: unknown, fallbackReference?: string): VendResponse {
+    const runtime = parseRuntimeConfiguration(this.connector);
+    const fields = runtime.fields ?? {};
+    const providerTransactionId = getByPath(body, fields.providerTransactionId);
+    const rawStatus = getByPath(body, fields.vendStatus ?? fields.providerStatus);
+    const providerStatus = getByPath(body, fields.providerStatus);
+    const fulfilment = getByPath(body, fields.fulfilment);
+
+    return {
+      providerTransactionId: typeof providerTransactionId === "string"
+        ? providerTransactionId
+        : fallbackReference ?? "UNKNOWN",
+      status: normalizeVendStatus(rawStatus, runtime.statusMap),
+      ...(typeof providerStatus === "string" ? { providerStatus } : {}),
+      ...(fulfilment && typeof fulfilment === "object"
+        ? { fulfilment: fulfilment as Record<string, unknown> }
+        : {})
+    };
+  }
+}
