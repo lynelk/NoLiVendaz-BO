@@ -1,0 +1,113 @@
+import type {
+  ConnectorRecord,
+  PaymentStatus,
+  ProviderStatus,
+  TransactionStatus,
+  VendStatus
+} from "@nolivendaz/canonical-models";
+
+export interface ProviderCapability {
+  code: string;
+  description?: string;
+}
+
+export interface ProviderHealthResult {
+  status: "HEALTHY" | "DEGRADED" | "OUTAGE" | "MAINTENANCE" | "UNKNOWN";
+  latencyMs?: number;
+  checkedAt: string;
+  details?: Record<string, unknown>;
+}
+
+export interface VendRequest {
+  transactionId: string;
+  correlationId: string;
+  idempotencyKey: string;
+  serviceCode: string;
+  productCode?: string;
+  customerReference?: string;
+  amount: string;
+  currency: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface VendResponse {
+  providerTransactionId: string;
+  status: VendStatus;
+  providerStatus?: string;
+  fulfilment?: Record<string, unknown>;
+  rawReference?: string;
+}
+
+export interface ProviderTransaction {
+  providerTransactionId: string;
+  transactionStatus: TransactionStatus;
+  paymentStatus?: PaymentStatus;
+  vendStatus: VendStatus;
+  providerStatus?: string;
+  amount?: string;
+  currency?: string;
+  rawReference?: string;
+}
+
+export interface RefundRequest {
+  transactionId: string;
+  providerTransactionId: string;
+  amount: string;
+  currency: string;
+  reason: string;
+  idempotencyKey: string;
+}
+
+export interface RefundResponse {
+  providerRefundId: string;
+  status: "PENDING" | "COMPLETED" | "FAILED";
+  providerStatus?: string;
+}
+
+export interface ProviderDevice {
+  providerDeviceId: string;
+  status: "ONLINE" | "OFFLINE" | "DEGRADED" | "MAINTENANCE" | "DISABLED" | "UNKNOWN";
+  metadata?: Record<string, unknown>;
+}
+
+export interface ProviderSettlement {
+  providerSettlementId: string;
+  currency: string;
+  grossAmount: string;
+  netAmount: string;
+  status: string;
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface NormalizedProviderEvent {
+  id: string;
+  type: string;
+  occurredAt: string;
+  correlationId?: string;
+  providerTransactionId?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface VendingProviderAdapter {
+  readonly connector: ConnectorRecord;
+
+  getProviderStatus?(): Promise<ProviderStatus>;
+  getCapabilities(): Promise<ProviderCapability[]>;
+  healthCheck(): Promise<ProviderHealthResult>;
+
+  initiateVend(request: VendRequest): Promise<VendResponse>;
+  getVendStatus(reference: string): Promise<VendResponse>;
+  getTransaction(reference: string): Promise<ProviderTransaction>;
+
+  initiateRefund?(request: RefundRequest): Promise<RefundResponse>;
+  getRefundStatus?(reference: string): Promise<RefundResponse>;
+  resendToken?(reference: string): Promise<{ accepted: boolean; reference?: string }>;
+
+  listDevices?(): Promise<ProviderDevice[]>;
+  getDeviceStatus?(deviceId: string): Promise<ProviderDevice>;
+  listSettlements?(from: string, to: string): Promise<ProviderSettlement[]>;
+
+  verifyWebhook(headers: Record<string, string | string[] | undefined>, rawBody: string): Promise<boolean>;
+  normalizeWebhook(payload: unknown): Promise<NormalizedProviderEvent[]>;
+}
