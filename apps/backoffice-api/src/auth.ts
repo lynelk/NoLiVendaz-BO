@@ -53,14 +53,19 @@ async function loadPrincipal(claims: JwtClaims): Promise<Principal> {
         [user.id]
       );
 
-      return {
+      const principal: Principal = {
         userId: user.id,
         tenantId: user.tenant_id,
-        email: user.email ?? claims.email,
-        displayName: user.display_name ?? claims.name,
         isPlatformAdmin: user.is_platform_admin,
         permissions: permissionResult.rows.map((row) => row.code)
       };
+
+      const email = user.email ?? claims.email;
+      const displayName = user.display_name ?? claims.name;
+      if (email) principal.email = email;
+      if (displayName) principal.displayName = displayName;
+
+      return principal;
     }
   );
 }
@@ -72,7 +77,8 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
     "authenticate",
     async function authenticate(request: FastifyRequest, reply: FastifyReply) {
       try {
-        const claims = await request.jwtVerify<JwtClaims>();
+        await request.jwtVerify();
+        const claims = request.user as JwtClaims;
 
         if (!claims.sub || !claims.tenant_id) {
           return reply.code(401).send({

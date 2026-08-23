@@ -98,6 +98,9 @@ export async function createProvider(
       ]
     );
 
+    const row = result.rows[0] as ProviderRecord | undefined;
+    if (!row) throw new Error("PROVIDER_INSERT_RETURNED_NO_ROW");
+
     await client.query(
       `INSERT INTO audit_logs (
          tenant_id, actor_user_id, action, resource_type, resource_id, after_state
@@ -106,12 +109,12 @@ export async function createProvider(
       [
         principal.tenantId,
         principal.userId,
-        result.rows[0].id,
-        JSON.stringify(result.rows[0])
+        row.id,
+        JSON.stringify(row)
       ]
     );
 
-    return result.rows[0] as ProviderRecord;
+    return row;
   });
 }
 
@@ -173,6 +176,9 @@ export async function createConnector(
       ]
     );
 
+    const row = result.rows[0] as ConnectorRecord | undefined;
+    if (!row) throw new Error("CONNECTOR_INSERT_RETURNED_NO_ROW");
+
     await client.query(
       `INSERT INTO audit_logs (
          tenant_id, actor_user_id, action, resource_type, resource_id, after_state
@@ -181,12 +187,12 @@ export async function createConnector(
       [
         principal.tenantId,
         principal.userId,
-        result.rows[0].id,
-        JSON.stringify(result.rows[0])
+        row.id,
+        JSON.stringify(row)
       ]
     );
 
-    return result.rows[0] as ConnectorRecord;
+    return row;
   });
 }
 

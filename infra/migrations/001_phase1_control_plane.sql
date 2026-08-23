@@ -399,6 +399,9 @@ BEFORE DELETE ON audit_logs
 FOR EACH ROW EXECUTE FUNCTION app.reject_audit_mutation();
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE role_permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE providers ENABLE ROW LEVEL SECURITY;
@@ -415,9 +418,91 @@ ALTER TABLE transaction_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approval_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+ALTER TABLE roles FORCE ROW LEVEL SECURITY;
+ALTER TABLE user_roles FORCE ROW LEVEL SECURITY;
+ALTER TABLE role_permissions FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchants FORCE ROW LEVEL SECURITY;
+ALTER TABLE sites FORCE ROW LEVEL SECURITY;
+ALTER TABLE providers FORCE ROW LEVEL SECURITY;
+ALTER TABLE provider_connectors FORCE ROW LEVEL SECURITY;
+ALTER TABLE connector_capabilities FORCE ROW LEVEL SECURITY;
+ALTER TABLE services FORCE ROW LEVEL SECURITY;
+ALTER TABLE products FORCE ROW LEVEL SECURITY;
+ALTER TABLE provider_products FORCE ROW LEVEL SECURITY;
+ALTER TABLE merchant_provider_mappings FORCE ROW LEVEL SECURITY;
+ALTER TABLE site_provider_mappings FORCE ROW LEVEL SECURITY;
+ALTER TABLE routes FORCE ROW LEVEL SECURITY;
+ALTER TABLE transactions FORCE ROW LEVEL SECURITY;
+ALTER TABLE transaction_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE approval_requests FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
+
 CREATE POLICY users_tenant_policy ON users
   USING (tenant_id = app.current_tenant_id() OR app.is_platform_admin())
   WITH CHECK (tenant_id = app.current_tenant_id() OR app.is_platform_admin());
+
+CREATE POLICY roles_select_policy ON roles
+  FOR SELECT USING (
+    tenant_id IS NULL
+    OR tenant_id = app.current_tenant_id()
+    OR app.is_platform_admin()
+  );
+
+CREATE POLICY roles_write_policy ON roles
+  FOR ALL USING (
+    tenant_id = app.current_tenant_id()
+    OR app.is_platform_admin()
+  )
+  WITH CHECK (
+    tenant_id = app.current_tenant_id()
+    OR app.is_platform_admin()
+  );
+
+CREATE POLICY user_roles_policy ON user_roles
+  USING (
+    EXISTS (
+      SELECT 1 FROM users u
+       WHERE u.id = user_roles.user_id
+         AND (u.tenant_id = app.current_tenant_id() OR app.is_platform_admin())
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM users u
+       WHERE u.id = user_roles.user_id
+         AND (u.tenant_id = app.current_tenant_id() OR app.is_platform_admin())
+    )
+  );
+
+CREATE POLICY role_permissions_select_policy ON role_permissions
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM roles r
+       WHERE r.id = role_permissions.role_id
+         AND (
+           r.tenant_id IS NULL
+           OR r.tenant_id = app.current_tenant_id()
+           OR app.is_platform_admin()
+         )
+    )
+  );
+
+CREATE POLICY role_permissions_write_policy ON role_permissions
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM roles r
+       WHERE r.id = role_permissions.role_id
+         AND (r.tenant_id = app.current_tenant_id() OR app.is_platform_admin())
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM roles r
+       WHERE r.id = role_permissions.role_id
+         AND (r.tenant_id = app.current_tenant_id() OR app.is_platform_admin())
+    )
+  );
 
 CREATE POLICY merchants_tenant_policy ON merchants
   USING (tenant_id = app.current_tenant_id() OR app.is_platform_admin())

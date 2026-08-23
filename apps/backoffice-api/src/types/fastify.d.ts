@@ -3,6 +3,6 @@ import "fastify";
 
 declare module "fastify" {
   interface FastifyRequest {
-    principal?: Principal;
+    principal: Principal | null;
   }
 }

@@ -2,6 +2,11 @@ import pg, { type PoolClient, type QueryResult, type QueryResultRow } from "pg";
 
 const { Pool } = pg;
 
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is required.");
+}
+
 export interface DatabasePrincipalContext {
   tenantId: string;
   isPlatformAdmin: boolean;
@@ -9,7 +14,7 @@ export interface DatabasePrincipalContext {
 }
 
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl,
   max: Number(process.env.DB_POOL_MAX ?? 20),
   idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS ?? 30000),
   connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS ?? 5000),
