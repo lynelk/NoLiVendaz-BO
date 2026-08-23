@@ -1,6 +1,6 @@
 {
   "name": "nolivendaz-backoffice",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "NOLI Vendaz multi-provider vending operations and orchestration control plane",
   "packageManager": "pnpm@10.15.0",
@@ -14,9 +14,12 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
-    "test": "turbo test"
+    "test": "turbo test",
+    "db:migrate": "pnpm --filter @nolivendaz/database migrate",
+    "db:seed": "pnpm --filter @nolivendaz/database seed"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "turbo": "^2.5.0",
     "typescript": "^5.9.0"
   }
