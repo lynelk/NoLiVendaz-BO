@@ -1,0 +1,23 @@
+{
+  "name": "nolivendaz-backoffice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NOLI Vendaz multi-provider vending operations and orchestration control plane",
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "repo:check": "node scripts/verify-repo.mjs",
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0"
+  }
+}
