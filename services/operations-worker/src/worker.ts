@@ -1,0 +1,4 @@
+import { deliverCriticalAlertWebhooks,runAllTenants } from "./index.js";
+const raw=Number(process.env.OPERATIONS_WORKER_INTERVAL_MS??120000);const interval=Number.isFinite(raw)?Math.max(60000,raw):120000;let stopping=false;process.on('SIGTERM',()=>{stopping=true});process.on('SIGINT',()=>{stopping=true});const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
+async function main(){while(!stopping){try{const results=await runAllTenants();let notifications=0;for(const result of results)notifications+=await deliverCriticalAlertWebhooks(result.tenantId);console.log(JSON.stringify({event:'operations.cycle.completed',results,notifications,at:new Date().toISOString()}));}catch(error){console.error(JSON.stringify({event:'operations.cycle.failed',error:error instanceof Error?error.message:'UNKNOWN',at:new Date().toISOString()}));}if(!stopping)await sleep(interval);}}
+void main();
