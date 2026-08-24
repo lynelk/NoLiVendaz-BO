@@ -32,8 +32,28 @@ WITH role_map(role_code,permission_code) AS (
 ), resolved AS (SELECT r.id role_id,p.id permission_id FROM role_map m JOIN roles r ON r.tenant_id IS NULL AND r.code=m.role_code JOIN permissions p ON p.code=m.permission_code)
 INSERT INTO role_permissions(role_id,permission_id) SELECT role_id,permission_id FROM resolved ON CONFLICT DO NOTHING;
 
+-- Customer assurance is read-only for human system roles. Migrations run before seeds on a fresh
+-- installation, so the seed must grant these permissions after the roles actually exist.
+INSERT INTO role_permissions(role_id,permission_id)
+SELECT r.id,p.id FROM roles r CROSS JOIN permissions p
+WHERE r.tenant_id IS NULL
+  AND r.system_defined=true
+  AND p.code IN ('customer.read','customer.identity.read','customer.identity.capability.read')
+ON CONFLICT DO NOTHING;
+
 INSERT INTO role_permissions(role_id,permission_id)
 SELECT r.id,p.id FROM roles r CROSS JOIN permissions p WHERE r.tenant_id IS NULL AND r.code='PLATFORM_SUPER_ADMIN'
 ON CONFLICT DO NOTHING;
+
+-- Authoritative identity synchronization additionally requires NOLI_IDENTITY_SYNC_SECRET at the
+-- HTTP boundary. Do not grant the sync permissions to ordinary system roles.
+DELETE FROM role_permissions rp
+USING roles r, permissions p
+WHERE rp.role_id=r.id
+  AND rp.permission_id=p.id
+  AND r.tenant_id IS NULL
+  AND r.system_defined=true
+  AND r.code<>'PLATFORM_SUPER_ADMIN'
+  AND p.code IN ('customer.identity.sync','customer.identity.capability.sync');
 
 COMMIT;
