@@ -14,6 +14,8 @@ import {
   interpolatePath,
   normalizeVendStatus,
   parseRuntimeConfiguration,
+  requireEndpoint,
+  requireVendingEndpoints,
   requestJson,
   verifyHmacWebhook
 } from "@nolivendaz/provider-sdk";
@@ -39,11 +41,12 @@ export class GenericHttpVendingAdapter implements VendingProviderAdapter {
 
   async getCapabilities() {
     const runtime = parseRuntimeConfiguration(this.connector);
-    const capabilities = [
-      { code: "vend.initiate" },
-      { code: "vend.status" },
-      { code: "transaction.query" }
-    ];
+    const capabilities: Array<{ code: string }> = [];
+    if (runtime.endpoints.initiateVend) capabilities.push({ code: "vend.initiate" });
+    if (runtime.endpoints.getVendStatus) capabilities.push({ code: "vend.status" });
+    if (runtime.endpoints.getTransaction || runtime.endpoints.getVendStatus) {
+      capabilities.push({ code: "transaction.query" });
+    }
     if (this.connector.webhookSecretReference) capabilities.push({ code: "webhook.receive" });
     if (runtime.endpoints.initiateRefund) capabilities.push({ code: "refund.create" });
     if (runtime.endpoints.getRefundStatus) capabilities.push({ code: "refund.status" });
@@ -87,12 +90,13 @@ export class GenericHttpVendingAdapter implements VendingProviderAdapter {
 
   async initiateVend(request: VendRequest): Promise<VendResponse> {
     const runtime = parseRuntimeConfiguration(this.connector);
+    const { initiateVend } = requireVendingEndpoints(runtime);
     const result = await requestJson(
       this.connector,
       this.secrets,
       runtime,
       "POST",
-      runtime.endpoints.initiateVend,
+      initiateVend,
       request
     );
     return this.toVendResponse(result.body);
@@ -100,19 +104,21 @@ export class GenericHttpVendingAdapter implements VendingProviderAdapter {
 
   async getVendStatus(reference: string): Promise<VendResponse> {
     const runtime = parseRuntimeConfiguration(this.connector);
+    const { getVendStatus } = requireVendingEndpoints(runtime);
     const result = await requestJson(
       this.connector,
       this.secrets,
       runtime,
       "GET",
-      interpolatePath(runtime.endpoints.getVendStatus, { reference })
+      interpolatePath(getVendStatus, { reference })
     );
     return this.toVendResponse(result.body, reference);
   }
 
   async getTransaction(reference: string): Promise<ProviderTransaction> {
     const runtime = parseRuntimeConfiguration(this.connector);
-    const endpoint = runtime.endpoints.getTransaction ?? runtime.endpoints.getVendStatus;
+    const endpoint = runtime.endpoints.getTransaction
+      ?? requireEndpoint(runtime, "getVendStatus", "CONNECTOR_TRANSACTION_QUERY_ENDPOINT_REQUIRED");
     const result = await requestJson(
       this.connector,
       this.secrets,
