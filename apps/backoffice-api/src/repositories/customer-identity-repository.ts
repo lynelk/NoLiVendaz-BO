@@ -5,19 +5,19 @@ const context=(p:Principal)=>({tenantId:p.tenantId,isPlatformAdmin:p.isPlatformA
 
 export type IdentitySyncInput={
   externalReference:string;
-  phone?:string|null;
-  email?:string|null;
-  displayName?:string|null;
-  phoneVerifiedAt?:string|null;
-  identityType?:string|null;
-  identityCountry?:string|null;
-  identityNumberMask?:string|null;
+  phone?:string|null|undefined;
+  email?:string|null|undefined;
+  displayName?:string|null|undefined;
+  phoneVerifiedAt?:string|null|undefined;
+  identityType?:string|null|undefined;
+  identityCountry?:string|null|undefined;
+  identityNumberMask?:string|null|undefined;
   identityStatus:"NOT_SUBMITTED"|"FORMAT_VALID"|"VERIFICATION_PENDING"|"VERIFIED"|"VERIFICATION_FAILED"|"REVIEW_REQUIRED";
-  identityProvider?:string|null;
-  identityProviderReference?:string|null;
-  identityVerifiedAt?:string|null;
-  consentVersion?:string|null;
-  consentAcceptedAt?:string|null;
+  identityProvider?:string|null|undefined;
+  identityProviderReference?:string|null|undefined;
+  identityVerifiedAt?:string|null|undefined;
+  consentVersion?:string|null|undefined;
+  consentAcceptedAt?:string|null|undefined;
   source:"NOLI"|"CPAY";
 };
 
