@@ -21,6 +21,7 @@ import { registerRecoveryRoutes } from "./routes/recovery.js";
 import { registerOperatorRoutes } from "./routes/operator.js";
 import { registerManagementRoutes } from "./routes/management.js";
 import { registerAdminRoutes } from "./routes/admin.js";
+import { registerCustomerIdentityRoutes } from "./routes/customer-identity.js";
 
 export async function buildApp(){
   const app=Fastify({logger:{level:process.env.LOG_LEVEL??"info"},requestIdHeader:"x-correlation-id"});
@@ -45,6 +46,7 @@ export async function buildApp(){
   await registerProviderLifecycleRoutes(app);
   await registerOperatorRoutes(app);
   await registerManagementRoutes(app);
+  await registerCustomerIdentityRoutes(app);
   await registerAdminRoutes(app);
   await registerTransactionRoutes(app);
   await registerProviderHealthRoutes(app);
