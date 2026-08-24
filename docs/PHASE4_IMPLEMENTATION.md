@@ -41,6 +41,28 @@ A tenant-scoped manual recovery cycle is also available through:
 POST /api/v1/recovery/run
 ```
 
+### Provider onboarding lifecycle
+
+Provider onboarding is explicit and pre-production only in Phase 4.
+
+```text
+DRAFT -> DEVELOPMENT -> SANDBOX -> CERTIFIED
+```
+
+`DRAFT -> DEVELOPMENT` and `DEVELOPMENT -> SANDBOX` are controlled through:
+
+```text
+POST /api/v1/providers/:providerId/lifecycle/advance
+```
+
+Non-production connectors can be activated, disabled or placed into maintenance through:
+
+```text
+PATCH /api/v1/connectors/:connectorId/preproduction-state
+```
+
+The endpoint rejects `PRODUCTION` connectors. Certification owns promotion from sandbox readiness to `CERTIFIED`. Production activation remains a separate governance step and is intentionally not implemented as an automatic Phase 4 transition.
+
 ### Provider certification
 
 Certification is deliberately separate from production activation.
@@ -157,7 +179,7 @@ Apply migrations in order:
 004_phase4_recovery_certification_support.sql
 ```
 
-Migration 004 adds recovery scheduling columns, support tables, certification tables, settlement links, RLS policies, indexes, permissions and the `refund.status` capability.
+Migration 004 adds recovery scheduling columns, support tables, certification tables, settlement links, RLS policies, indexes, pre-production lifecycle permissions and the `refund.status` capability.
 
 ## Safety invariants
 
@@ -170,7 +192,8 @@ Migration 004 adds recovery scheduling columns, support tables, certification ta
 7. Certification never activates production automatically.
 8. Certification approval is maker/checker controlled.
 9. Support-case linked resources and assignees remain inside the tenant boundary.
-10. Provider secrets remain references and are never returned by certification results.
+10. Pre-production lifecycle endpoints cannot activate production connectors.
+11. Provider secrets remain references and are never returned by certification results.
 
 ## Phase 5 candidate scope
 
