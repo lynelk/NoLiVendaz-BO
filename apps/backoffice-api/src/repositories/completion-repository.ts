@@ -4,7 +4,7 @@ import { withTenantContext } from "@nolivendaz/database";
 const context=(p:Principal)=>({tenantId:p.tenantId,isPlatformAdmin:p.isPlatformAdmin,userId:p.userId});
 async function audit(c:any,p:Principal,action:string,type:string,id:unknown,state:unknown){await c.query(`INSERT INTO audit_logs(tenant_id,actor_user_id,action,resource_type,resource_id,after_state) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[p.tenantId,p.userId,action,type,id??null,JSON.stringify(state??{})]);}
 
-export async function createDevice(p:Principal,input:{code:string;deviceType:string;merchantId?:string;siteId?:string;serialNumber?:string;providerId?:string;connectorId?:string;providerDeviceId?:string}){
+export async function createDevice(p:Principal,input:{code:string;deviceType:string;merchantId?:string|undefined;siteId?:string|undefined;serialNumber?:string|undefined;providerId?:string|undefined;connectorId?:string|undefined;providerDeviceId?:string|undefined}){
  return withTenantContext(context(p),async c=>{
   if(input.merchantId){const m=await c.query(`SELECT 1 FROM merchants WHERE id=$1 AND tenant_id=$2`,[input.merchantId,p.tenantId]);if(m.rowCount!==1)throw new Error('MERCHANT_NOT_FOUND');}
   if(input.siteId){const s=await c.query(`SELECT 1 FROM sites WHERE id=$1 AND tenant_id=$2 AND ($3::uuid IS NULL OR merchant_id=$3)`,[input.siteId,p.tenantId,input.merchantId??null]);if(s.rowCount!==1)throw new Error('SITE_NOT_FOUND');}
@@ -15,7 +15,7 @@ export async function createDevice(p:Principal,input:{code:string;deviceType:str
  });
 }
 
-export async function updateIncident(p:Principal,id:string,input:{status?:'OPEN'|'INVESTIGATING'|'MITIGATED'|'RESOLVED'|'CLOSED';ownerUserId?:string|null;summary?:string}){
+export async function updateIncident(p:Principal,id:string,input:{status?:'OPEN'|'INVESTIGATING'|'MITIGATED'|'RESOLVED'|'CLOSED'|undefined;ownerUserId?:string|null|undefined;summary?:string|undefined}){
  return withTenantContext(context(p),async c=>{
   if(input.ownerUserId){const u=await c.query(`SELECT 1 FROM users WHERE id=$1 AND tenant_id=$2 AND status='ACTIVE'`,[input.ownerUserId,p.tenantId]);if(u.rowCount!==1)throw new Error('INCIDENT_OWNER_NOT_FOUND');}
   const row=(await c.query(`UPDATE incidents SET status=COALESCE($2,status),owner_user_id=CASE WHEN $3::boolean THEN $4::uuid ELSE owner_user_id END,summary=COALESCE($5,summary),mitigated_at=CASE WHEN $2='MITIGATED' THEN COALESCE(mitigated_at,now()) ELSE mitigated_at END,resolved_at=CASE WHEN $2 IN ('RESOLVED','CLOSED') THEN COALESCE(resolved_at,now()) ELSE resolved_at END,updated_at=now() WHERE id=$1 RETURNING *`,[id,input.status??null,Object.prototype.hasOwnProperty.call(input,'ownerUserId'),input.ownerUserId??null,input.summary??null])).rows[0];
@@ -23,7 +23,7 @@ export async function updateIncident(p:Principal,id:string,input:{status?:'OPEN'
  });
 }
 
-export async function upsertCredentialMetadata(p:Principal,connectorId:string,input:{credentialType:string;credentialReference:string;expiresAt?:string|null}){
+export async function upsertCredentialMetadata(p:Principal,connectorId:string,input:{credentialType:string;credentialReference:string;expiresAt?:string|null|undefined}){
  return withTenantContext(context(p),async c=>{
   const connector=(await c.query(`SELECT pc.id,pc.provider_id FROM provider_connectors pc JOIN providers pr ON pr.id=pc.provider_id WHERE pc.id=$1 AND (pr.scope='PLATFORM' OR pr.tenant_id=$2)`,[connectorId,p.tenantId])).rows[0];if(!connector)throw new Error('CONNECTOR_NOT_VISIBLE');
   const row=(await c.query(`INSERT INTO provider_credentials(tenant_id,provider_id,connector_id,credential_type,credential_reference,expires_at,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(tenant_id,connector_id,credential_type) DO UPDATE SET credential_reference=EXCLUDED.credential_reference,expires_at=EXCLUDED.expires_at,status=CASE WHEN EXCLUDED.expires_at IS NOT NULL AND EXCLUDED.expires_at<=now() THEN 'EXPIRED' ELSE 'ACTIVE' END,updated_at=now() RETURNING id,provider_id,connector_id,credential_type,status,expires_at,rotated_at,created_at,updated_at`,[p.tenantId,connector.provider_id,connectorId,input.credentialType,input.credentialReference,input.expiresAt??null,p.userId])).rows[0];
