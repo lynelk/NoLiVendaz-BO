@@ -15,6 +15,13 @@ export async function getConnectorRuntime(principal: Principal, providerId: stri
   });
 }
 
+export async function connectorHasCapability(principal: Principal, connectorId: string, capabilityCode: string): Promise<boolean> {
+  return withTenantContext(context(principal), async client => {
+    const result = await client.query(`SELECT 1 FROM connector_capabilities cc JOIN capabilities c ON c.id=cc.capability_id WHERE cc.connector_id=$1 AND cc.enabled=true AND c.code=$2 LIMIT 1`, [connectorId, capabilityCode]);
+    return result.rowCount === 1;
+  });
+}
+
 export async function recordProviderHealth(principal: Principal, runtime: ConnectorRuntimeRecord, health: ProviderHealthResult): Promise<void> {
   await withTenantContext(context(principal), async client => { await client.query(`INSERT INTO provider_health_events (tenant_id,provider_id,connector_id,health_status,latency_ms,details,checked_at) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`, [principal.tenantId,runtime.providerId,runtime.connector.id,health.status,health.latencyMs ?? null,JSON.stringify(health.details ?? {}),health.checkedAt]); });
 }
