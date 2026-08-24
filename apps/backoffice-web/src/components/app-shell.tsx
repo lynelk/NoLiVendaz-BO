@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import type { OperatorContext } from "../lib/types.js";
+import type { OperatorContext } from "../lib/types";
 const navigation=[
  ["Command Centre","/",null],["Transactions","/transactions","transaction.read"],["Providers","/providers","provider.read"],["Merchants & Sites","/merchants","merchant.read"],["Services & Products","/catalog","catalog.read"],["Routing","/routing","route.read"],["Devices","/devices","device.read"],["Payments & Settlements","/finance","settlement.read"],["Reconciliation","/reconciliation","reconciliation.read"],["Support","/support","support.read"],["Integration Health","/integration-health","provider.health.read"],["Alerts & Incidents","/alerts","alert.read"],["Analytics & Reports","/analytics","analytics.read"],["Administration","/administration","admin.audit.read"]
 ] as const;
