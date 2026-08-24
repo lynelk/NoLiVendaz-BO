@@ -2,65 +2,80 @@
 
 Unified multi-provider vending operations and orchestration control plane for NOLI Vendaz.
 
-This repository is the receiving repository for the NOLI Vendaz back-office application. The back office is designed to manage NOLI-native vending, CPay/ChargeNow-connected vending, and approved third-party vending providers through a common provider, connector, capability, adapter, transaction, reconciliation, support, and audit architecture.
-
-## Product principle
-
 > One operational view, many vending engines.
 
-The Back Office owns cross-provider control, governance, routing, transaction visibility, reconciliation, support, reporting, integration health, approvals, security, and audit. Provider-specific execution stays behind adapters.
+The application provides one secure operational workspace across NOLI Native Vending, CPay/ChargeNow-connected services, and approved direct third-party vending providers. Core services own canonical transactions, routing, financial control, support, reconciliation, analytics, governance and audit. Provider-specific execution stays behind adapters.
 
-## Repository layout
+## Application status
+
+The repository now contains the complete back-office application baseline: operator web UI, API, provider adapters and orchestrator, webhook processing, automated recovery, operations monitoring, provider certification, financial reconciliation, administration, authentication, observability and deployment/DR tooling.
+
+Production readiness still depends on environment-specific configuration: real OIDC credentials, production secret-manager values, deployed NOLI Native and CPay/ChargeNow endpoint mappings, provider sandbox certification, database/object-storage provisioning and successful deployment checks. Those values are intentionally not embedded in source.
+
+See `docs/APPLICATION_COMPLETION.md` for the implemented scope and production gates.
+
+## Runtime services
 
 ```text
-apps/
-  backoffice-web/        # Administrator web application
-  backoffice-api/        # Back-office HTTP/API boundary
-services/
-  provider-orchestrator/ # Provider routing and adapter execution
-  reconciliation-service/
-  webhook-gateway/
-adapters/
-  native-vending/        # Existing NOLI vending integration
-  cpay/                  # CPay / ChargeNow integration
-packages/
-  canonical-models/      # Shared domain types/contracts
-  provider-sdk/          # Adapter interface and certification contracts
-infra/                   # Deployment, migrations, monitoring and runtime config
-docs/                    # Architecture and implementation guidance
-scripts/                 # Repository verification and developer utilities
+apps/backoffice-web        Next.js operator console
+apps/backoffice-api        Fastify control-plane API
+services/recovery-worker   Safe UNKNOWN/refund recovery worker
+services/operations-worker Provider health, alert and credential monitoring
 ```
 
-## Technology baseline
+Supporting packages and services include the provider orchestrator, reconciliation service, webhook gateway, canonical models, database package and provider SDK. Provider integrations live under `adapters/`.
 
-The repository is prepared as a Node.js 22 + TypeScript + pnpm workspace. Application frameworks can be finalized during implementation, but provider-specific business logic must never be embedded in shared core services.
+## Operator modules
 
-## Start here
+The web application includes Command Centre, Transactions and Transaction 360, Providers and certification, Merchants & Sites, Services & Products, Routing, Devices, Payments & Settlements, Reconciliation, Support, Integration Health, Alerts & Incidents, Analytics and Administration.
 
-1. Read `docs/BUILD_SPECIFICATION.md`.
-2. Read `docs/ARCHITECTURE.md`.
-3. Copy `.env.example` to a local environment file and populate only development credentials.
-4. Install Node.js 22 and pnpm 10.
-5. Run `pnpm install`.
-6. Run `pnpm repo:check`.
-7. Add application code inside the existing boundaries rather than creating provider-specific shortcuts.
+Provider actions are capability-aware and permission-aware. Financial actions remain enforced by backend state machines, idempotency, maker/checker controls and audit logging.
+
+## Local setup
+
+1. Install Node.js 22 and pnpm 10.
+2. Copy `.env.example` to a local environment file and use development-only values.
+3. Start PostgreSQL and Redis with `docker compose up -d postgres redis`.
+4. Run `pnpm install`.
+5. Run `pnpm db:migrate` and `pnpm db:seed`.
+6. Configure `BOOTSTRAP_ADMIN_EMAIL` and run `pnpm bootstrap:admin` once to create the initial tenant/platform administrator, then remove bootstrap values from runtime environments.
+7. Run `pnpm dev`.
+
+Useful checks:
+
+```bash
+pnpm repo:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm security:gate
+```
+
+## Production deployment
+
+Deploy the web, API, recovery worker and operations worker independently. PostgreSQL is the financial and operational source of truth. Configure OIDC Authorization Code + PKCE, separate `JWT_SECRET` and `AUTH_EXCHANGE_SECRET`, provider secret references, alert routing, metrics protection and private backup storage through the hosting platform secret/configuration system.
+
+Follow `docs/PRODUCTION_RUNBOOK.md`. A deployment is not production-ready until migrations, security checks, OIDC login, provider certification, webhook verification, safe recovery, settlement/reconciliation, alerting and a restore smoke test have been verified.
 
 ## Non-negotiable rules
 
 - Core services understand vending concepts; adapters understand providers.
 - Payment success is not vending success.
-- Provider timeouts become `UNKNOWN` until queried or reconciled. Never blindly retry a paid vend.
-- Every external transaction carries a correlation ID and idempotency key.
-- Webhooks are verified, deduplicated, persisted, normalized, then processed.
-- Secrets never enter source control.
-- High-risk configuration and financial actions require RBAC, approval, and audit.
-- Tenant and merchant data isolation is mandatory.
+- A provider timeout becomes `UNKNOWN`; never blindly re-vend after payment.
+- Post-dispatch failover is prohibited unless an explicitly proven cross-provider recovery contract exists.
+- External requests carry correlation IDs and idempotency keys.
+- Webhooks are verified, replay-protected, deduplicated, persisted and normalized before domain handling.
+- Secrets never enter source control or ordinary business tables.
+- High-risk configuration and financial actions require RBAC, approval and immutable audit evidence.
+- Tenant isolation is enforced in application logic and PostgreSQL RLS.
+- Settlement matching uses explicit provider references, not amount/time guesses.
 
-## Initial integrations
+## Documentation
 
-The first production integrations are:
-
-1. NOLI Native Vending via `adapters/native-vending`.
-2. CPay / ChargeNow via `adapters/cpay`.
-
-Additional providers must implement the provider SDK contract and pass certification before production routing.
+- `docs/BUILD_SPECIFICATION.md` - product and engineering requirements
+- `docs/ARCHITECTURE.md` - architecture and responsibility boundaries
+- `docs/PHASE1_IMPLEMENTATION.md` through `docs/PHASE5_IMPLEMENTATION.md` - implementation history
+- `docs/APPLICATION_COMPLETION.md` - final implemented scope, known configuration dependencies and acceptance checks
+- `docs/PRODUCTION_RUNBOOK.md` - deployment, monitoring, backup and recovery operations
+- `docs/DEVELOPMENT.md` - developer workflow
