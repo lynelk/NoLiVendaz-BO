@@ -171,10 +171,26 @@ export async function recordAndApplyWebhook(
         ]
       );
 
-      if (event.vendStatus) {
+      if (event.vendStatus && transactionStatus) {
+        const refundRequired = transactionStatus === "FAILED" || transactionStatus === "CANCELLED";
+        const settlementBlocked = transactionStatus !== "FULFILLED";
+        const holdReason = transactionStatus === "FAILED"
+          ? "PAID_VEND_FAILED"
+          : transactionStatus === "CANCELLED"
+            ? "PAID_VEND_CANCELLED"
+            : transactionStatus === "UNKNOWN"
+              ? "VEND_OUTCOME_UNKNOWN"
+              : transactionStatus !== "FULFILLED"
+                ? "VEND_IN_PROGRESS"
+                : null;
+
         await client.query(
           `UPDATE transactions
-           SET normalized_status = $2,
+           SET normalized_status = CASE
+                 WHEN normalized_status IN ('REFUND_PENDING','REFUNDED','DISPUTED')
+                   THEN normalized_status
+                 ELSE $2
+               END,
                vend_status = $3,
                provider_status = COALESCE($4, provider_status),
                provider_transaction_id = COALESCE($5, provider_transaction_id),
@@ -182,9 +198,25 @@ export async function recordAndApplyWebhook(
                  WHEN $2 = 'UNKNOWN' THEN COALESCE(unknown_since, now())
                  ELSE NULL
                END,
+               refund_required = CASE
+                 WHEN normalized_status IN ('REFUND_PENDING','REFUNDED','DISPUTED')
+                   THEN refund_required
+                 ELSE $6
+               END,
+               settlement_blocked = CASE
+                 WHEN normalized_status IN ('REFUND_PENDING','DISPUTED') THEN true
+                 WHEN normalized_status = 'REFUNDED' THEN false
+                 ELSE $7
+               END,
+               financial_hold_reason = CASE
+                 WHEN normalized_status IN ('REFUND_PENDING','REFUNDED','DISPUTED')
+                   THEN financial_hold_reason
+                 ELSE $8
+               END,
                updated_at = now(),
                completed_at = CASE
-                 WHEN $2 = 'FULFILLED' THEN COALESCE(completed_at, now())
+                 WHEN $2 IN ('FULFILLED','FAILED','CANCELLED')
+                   THEN COALESCE(completed_at, now())
                  ELSE completed_at
                END
            WHERE id = $1`,
@@ -193,7 +225,10 @@ export async function recordAndApplyWebhook(
             transactionStatus,
             event.vendStatus,
             event.providerStatus ?? null,
-            event.providerTransactionId ?? null
+            event.providerTransactionId ?? null,
+            refundRequired,
+            settlementBlocked,
+            holdReason
           ]
         );
       }
