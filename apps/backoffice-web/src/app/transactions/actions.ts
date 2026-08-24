@@ -1,6 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { apiPost } from "../../lib/api.js";
+import { apiPost } from "../../lib/api";
 function transactionId(formData:FormData){const value=formData.get("transactionId");if(typeof value!=="string"||!/^[0-9a-f-]{36}$/i.test(value))throw new Error("INVALID_TRANSACTION_ID");return value;}
 export async function queryOriginalProvider(formData:FormData){const id=transactionId(formData);await apiPost(`/api/v1/transactions/${id}/query-provider`);revalidatePath(`/transactions/${id}`);revalidatePath("/");}
 export async function requestRefund(formData:FormData){const id=transactionId(formData);const amount=String(formData.get("amount")??"").trim();const reason=String(formData.get("reason")??"").trim();const idempotencyKey=String(formData.get("idempotencyKey")??"").trim();if(!/^\d+(\.\d{1,6})?$/.test(amount)||Number(amount)<=0)throw new Error("INVALID_REFUND_AMOUNT");if(reason.length<5)throw new Error("REFUND_REASON_REQUIRED");if(idempotencyKey.length<8)throw new Error("REFUND_IDEMPOTENCY_KEY_REQUIRED");await apiPost(`/api/v1/transactions/${id}/refunds`,{amount,reason,idempotencyKey});revalidatePath(`/transactions/${id}`);revalidatePath("/finance");revalidatePath("/");}
