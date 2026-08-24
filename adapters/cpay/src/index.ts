@@ -38,8 +38,6 @@ export class CPayAdapter implements VendingProviderAdapter {
   }
 
   async getCapabilities() {
-    // These are the operations implemented by this adapter today. Additional
-    // CPay capabilities are exposed only when the corresponding methods exist.
     return [
       { code: "vend.initiate" },
       { code: "vend.status" },
@@ -186,10 +184,14 @@ export class CPayAdapter implements VendingProviderAdapter {
     const providerStatus = getByPath(body, fields.providerStatus);
     const fulfilment = getByPath(body, fields.fulfilment);
 
+    if (typeof providerTransactionId !== "string" && !fallbackReference) {
+      throw new Error("PROVIDER_TRANSACTION_REFERENCE_MISSING");
+    }
+
     return {
       providerTransactionId: typeof providerTransactionId === "string"
         ? providerTransactionId
-        : fallbackReference ?? "UNKNOWN",
+        : fallbackReference!,
       status: normalizeVendStatus(rawStatus, runtime.statusMap),
       ...(typeof providerStatus === "string" ? { providerStatus } : {}),
       ...(fulfilment && typeof fulfilment === "object"
