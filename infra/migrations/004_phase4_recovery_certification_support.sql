@@ -154,6 +154,8 @@ INSERT INTO permissions(code,description) VALUES
  ('certification.read','View provider certification runs'),
  ('certification.run','Execute connector certification checks'),
  ('certification.approve','Approve a passed certification and promote provider lifecycle'),
+ ('provider.lifecycle.manage','Move providers through pre-production lifecycle stages'),
+ ('provider.connector.state.manage','Manage non-production connector operational state'),
  ('settlement.match','Match settlement records to transactions')
 ON CONFLICT(code) DO UPDATE SET description=EXCLUDED.description;
 
