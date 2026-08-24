@@ -1,4 +1,5 @@
 import { CPayAdapter } from "@nolivendaz/adapter-cpay";
+import { GenericHttpVendingAdapter } from "@nolivendaz/adapter-http-generic";
 import { NativeVendingAdapter } from "@nolivendaz/adapter-native-vending";
 import type {
   ConnectorRecord,
@@ -42,9 +43,18 @@ export type AdapterFactory = (
   secrets: SecretResolver
 ) => VendingProviderAdapter;
 
+const genericFactory: AdapterFactory = (connector, secrets) =>
+  new GenericHttpVendingAdapter(connector, secrets);
+
 const factories = new Map<ProviderType, AdapterFactory>([
   ["NATIVE", (connector, secrets) => new NativeVendingAdapter(connector, secrets)],
-  ["CPAY", (connector, secrets) => new CPayAdapter(connector, secrets)]
+  ["CPAY", (connector, secrets) => new CPayAdapter(connector, secrets)],
+  ["DIRECT_API", genericFactory],
+  ["UTILITY", genericFactory],
+  ["AIRTIME", genericFactory],
+  ["VENDING_MACHINE", genericFactory],
+  ["AGGREGATOR", genericFactory],
+  ["CUSTOM", genericFactory]
 ]);
 
 export function registerProviderAdapterFactory(
@@ -153,10 +163,7 @@ export async function executeRefundSafely(
     );
     const fields = runtime.fields ?? {};
     const providerRefundId = getByPath(response.body, fields.providerRefundId);
-    const rawStatus = getByPath(
-      response.body,
-      fields.refundStatus ?? fields.providerStatus
-    );
+    const rawStatus = getByPath(response.body, fields.refundStatus ?? fields.providerStatus);
     const providerStatus = getByPath(response.body, fields.providerStatus);
 
     if (typeof providerRefundId !== "string" || !providerRefundId.trim()) {
@@ -167,6 +174,44 @@ export async function executeRefundSafely(
       outcome: "CONFIRMED",
       response: {
         providerRefundId,
+        status: normalizeRefundStatus(rawStatus, runtime.refundStatusMap),
+        ...(typeof providerStatus === "string" ? { providerStatus } : {})
+      }
+    };
+  } catch (error) {
+    return classify(error);
+  }
+}
+
+export async function queryRefundStatusSafely(
+  connector: ConnectorRecord,
+  secrets: SecretResolver,
+  providerRefundId: string
+): Promise<RefundExecutionResult> {
+  try {
+    assertConnectorOperational(connector);
+    const runtime = parseRuntimeConfiguration(connector);
+    if (!runtime.endpoints.getRefundStatus) {
+      return { outcome: "FAILED", error: "PROVIDER_REFUND_STATUS_NOT_CONFIGURED" };
+    }
+    const response = await requestJson(
+      connector,
+      secrets,
+      runtime,
+      "GET",
+      interpolatePath(runtime.endpoints.getRefundStatus, { reference: providerRefundId })
+    );
+    const fields = runtime.fields ?? {};
+    const returnedId = getByPath(response.body, fields.providerRefundId);
+    const rawStatus = getByPath(response.body, fields.refundStatus ?? fields.providerStatus);
+    const providerStatus = getByPath(response.body, fields.providerStatus);
+    const resolvedId = typeof returnedId === "string" && returnedId.trim()
+      ? returnedId
+      : providerRefundId;
+    return {
+      outcome: "CONFIRMED",
+      response: {
+        providerRefundId: resolvedId,
         status: normalizeRefundStatus(rawStatus, runtime.refundStatusMap),
         ...(typeof providerStatus === "string" ? { providerStatus } : {})
       }
@@ -220,6 +265,20 @@ export async function fetchProviderSettlements(
       throw new Error("PROVIDER_SETTLEMENT_INVALID_PERIOD");
     }
 
+    const referencesRaw = getByPath(row, fields.settlementTransactionReferences);
+    let transactionReferences: string[] | undefined;
+    if (referencesRaw !== undefined) {
+      if (!Array.isArray(referencesRaw)) {
+        throw new Error("PROVIDER_SETTLEMENT_TRANSACTION_REFERENCES_ARRAY_REQUIRED");
+      }
+      transactionReferences = [...new Set(
+        referencesRaw
+          .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+          .map((value) => String(value).trim())
+          .filter(Boolean)
+      )];
+    }
+
     return {
       providerSettlementId,
       currency,
@@ -227,7 +286,10 @@ export async function fetchProviderSettlements(
       netAmount,
       status,
       periodStart,
-      periodEnd
+      periodEnd,
+      ...(transactionReferences && transactionReferences.length > 0
+        ? { transactionReferences }
+        : {})
     };
   });
 }
