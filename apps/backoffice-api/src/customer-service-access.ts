@@ -1,5 +1,18 @@
 export type ProtectedService = "POWER_BANK_RENTAL";
 
+export const customerServiceAccessPolicy={
+  service:"POWER_BANK_RENTAL" as const,
+  baselineVersion:"NOLI_POWER_BANK_RENTAL_V1",
+  requirements:[
+    {code:"PROFILE",label:"Basic profile complete"},
+    {code:"TERMS",label:"Current Terms and Privacy Notice accepted"},
+    {code:"PHONE_VERIFICATION",label:"Registered phone verified"},
+    {code:"IDENTITY",label:"Accepted identification document configured"},
+    {code:"IDENTITY_CONSENT",label:"Identity-verification consent accepted"},
+    {code:"IDENTITY_VERIFICATION",label:"Authoritative identity status is VERIFIED"}
+  ]
+};
+
 export type CustomerServiceAccessSnapshot = {
   profileSetupComplete: boolean;
   termsAccepted: boolean;
