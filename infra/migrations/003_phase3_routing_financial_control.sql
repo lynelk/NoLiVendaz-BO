@@ -15,7 +15,7 @@ CREATE TABLE route_decisions (
   selected_connector_id uuid NOT NULL REFERENCES provider_connectors(id),
   selected_role varchar(20) NOT NULL CHECK (selected_role IN ('PRIMARY','SECONDARY')),
   reason text NOT NULL,
-  health_status varchar(32),
+  health_status varchar(32) CHECK (health_status IS NULL OR health_status IN ('HEALTHY','DEGRADED','OUTAGE','MAINTENANCE','UNKNOWN')),
   decided_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -38,6 +38,7 @@ CREATE TABLE refunds (
   approved_at timestamptz,
   completed_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (approved_by IS NULL OR approved_by <> requested_by),
   UNIQUE (tenant_id, idempotency_key)
 );
 
@@ -48,12 +49,13 @@ CREATE TABLE provider_settlements (
   connector_id uuid NOT NULL REFERENCES provider_connectors(id),
   provider_settlement_id varchar(200) NOT NULL,
   currency char(3) NOT NULL,
-  gross_amount numeric(20,6) NOT NULL,
-  net_amount numeric(20,6) NOT NULL,
+  gross_amount numeric(20,6) NOT NULL CHECK (gross_amount >= 0),
+  net_amount numeric(20,6) NOT NULL CHECK (net_amount >= 0),
   provider_status varchar(120) NOT NULL,
   period_start timestamptz NOT NULL,
   period_end timestamptz NOT NULL,
   fetched_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (period_end > period_start),
   UNIQUE (connector_id, provider_settlement_id)
 );
 
@@ -64,7 +66,7 @@ CREATE TABLE reconciliation_exceptions (
   provider_id uuid REFERENCES providers(id),
   exception_type varchar(80) NOT NULL,
   severity varchar(20) NOT NULL DEFAULT 'MEDIUM' CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
-  amount numeric(20,6),
+  amount numeric(20,6) CHECK (amount IS NULL OR amount >= 0),
   currency char(3),
   details jsonb NOT NULL DEFAULT '{}'::jsonb,
   status varchar(24) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','INVESTIGATING','RESOLVED','IGNORED')),
