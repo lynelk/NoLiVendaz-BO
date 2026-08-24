@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requirePermission } from "../auth.js";
 import { customerServiceAccessPolicy } from "../customer-service-access.js";
 import { isSafeIdentityMask } from "../customer-identity-validation.js";
+import { verifyIdentitySyncSecret } from "../customer-identity-sync-auth.js";
 import * as repo from "../repositories/customer-identity-repository.js";
 
 const status=z.enum(["NOT_SUBMITTED","FORMAT_VALID","VERIFICATION_PENDING","VERIFIED","VERIFICATION_FAILED","REVIEW_REQUIRED"]);
@@ -54,6 +55,19 @@ const capabilityItem=z.object({
 });
 const capabilitySyncSchema=z.object({capabilities:z.array(capabilityItem).max(100)});
 
+function authorizeSync(request:any,reply:any){
+  const auth=verifyIdentitySyncSecret(request.headers["x-noli-identity-sync-secret"]);
+  if(!auth.configured){
+    reply.code(503).send({error:"IDENTITY_SYNC_NOT_CONFIGURED",message:"Authoritative identity synchronization is disabled until NOLI_IDENTITY_SYNC_SECRET is configured."});
+    return false;
+  }
+  if(!auth.valid){
+    reply.code(401).send({error:"IDENTITY_SYNC_UNAUTHORIZED",message:"Authoritative identity synchronization authentication failed."});
+    return false;
+  }
+  return true;
+}
+
 export async function registerCustomerIdentityRoutes(app:FastifyInstance):Promise<void>{
   app.get('/api/v1/customers',{preHandler:[app.authenticate,requirePermission('customer.read')]},async request=>({data:await repo.listCustomers(request.principal!)}));
   app.get('/api/v1/customers/:customerId/identity',{preHandler:[app.authenticate,requirePermission('customer.identity.read')]},async(request,reply)=>{
@@ -63,6 +77,7 @@ export async function registerCustomerIdentityRoutes(app:FastifyInstance):Promis
   app.get('/api/v1/customer-identity/capabilities',{preHandler:[app.authenticate,requirePermission('customer.identity.capability.read')]},async request=>({data:await repo.listIdentityProviderCapabilities(request.principal!)}));
 
   app.put('/api/v1/customers/identity-sync',{preHandler:[app.authenticate,requirePermission('customer.identity.sync')]},async(request,reply)=>{
+    if(!authorizeSync(request,reply))return;
     const parsed=syncSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:'VALIDATION_ERROR',issues:parsed.error.issues});
     try{return{data:await repo.syncCustomerIdentity(request.principal!,parsed.data)}}catch(error){
@@ -73,6 +88,7 @@ export async function registerCustomerIdentityRoutes(app:FastifyInstance):Promis
   });
 
   app.put('/api/v1/customer-identity/capabilities-sync',{preHandler:[app.authenticate,requirePermission('customer.identity.capability.sync')]},async(request,reply)=>{
+    if(!authorizeSync(request,reply))return;
     const parsed=capabilitySyncSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:'VALIDATION_ERROR',issues:parsed.error.issues});
     try{return{data:await repo.syncIdentityProviderCapabilities(request.principal!,parsed.data.capabilities)}}catch(error){
