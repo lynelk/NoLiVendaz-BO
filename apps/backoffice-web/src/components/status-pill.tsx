@@ -1,4 +1,4 @@
-export function StatusPill({ value }: { value?: string | null }) {
+export function StatusPill({ value }: { value?: string | null | undefined }) {
   const normalized = (value ?? "UNKNOWN").toUpperCase();
   const tone = ["FULFILLED","SETTLED","COMPLETED","SUCCESS","HEALTHY","ACTIVE","CERTIFIED","PRODUCTION"].includes(normalized)
     ? "success"
