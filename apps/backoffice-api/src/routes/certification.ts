@@ -51,14 +51,16 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
           ["DEVELOPMENT","SANDBOX","CERTIFIED"].includes(certification.providerStatus) ? "PASS" : "FAIL",
           `Provider lifecycle is ${certification.providerStatus}`
         ));
+        const connectorEnabled = connector.enabled;
         checks.push(check(
           "connector.enabled",
-          connector.enabled ? "PASS" : "FAIL",
-          connector.enabled ? "Connector is enabled" : "Connector is disabled"
+          connectorEnabled ? "PASS" : "FAIL",
+          connectorEnabled ? "Connector is enabled" : "Connector is disabled"
         ));
+        const connectorOperational = ["ACTIVE","DEGRADED"].includes(connector.status);
         checks.push(check(
           "connector.operational_status",
-          ["ACTIVE","DEGRADED"].includes(connector.status) ? "PASS" : "FAIL",
+          connectorOperational ? "PASS" : "FAIL",
           `Connector operational status is ${connector.status}`
         ));
 
@@ -120,7 +122,7 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
             "webhook.receive": true
           };
           const missingEndpoints = certification.capabilities.filter(
-            (capability) => endpointChecks[capability] === false
+            (capability) => endpointChecks[capability] !== true
           );
           checks.push(check(
             "capabilities.endpoint_contract",
@@ -185,15 +187,69 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
             : "Webhook capability is not declared"
         ));
 
-        try {
-          const adapter = createProviderAdapter(certification.providerType, connector, secrets);
-          const adapterCapabilities = await adapter.getCapabilities();
+        let adapter: ReturnType<typeof createProviderAdapter> | undefined;
+        let advertised = new Set<string>();
+        if (runtime && connectorEnabled && connectorOperational) {
+          try {
+            adapter = createProviderAdapter(certification.providerType, connector, secrets);
+            const adapterCapabilities = await adapter.getCapabilities();
+            advertised = new Set(adapterCapabilities.map((item) => item.code));
+            checks.push(check(
+              "adapter.registered",
+              "PASS",
+              `Provider adapter is registered with ${adapterCapabilities.length} advertised capabilities`
+            ));
+          } catch (error) {
+            checks.push(check(
+              "adapter.registered",
+              "FAIL",
+              error instanceof Error ? error.message : "Provider adapter could not be instantiated"
+            ));
+          }
+        } else {
           checks.push(check(
             "adapter.registered",
-            "PASS",
-            `Provider adapter is registered with ${adapterCapabilities.length} executable capabilities`
+            "SKIP",
+            "Adapter checks require a valid runtime and an operational connector"
           ));
-          const health = await adapter.healthCheck();
+        }
+
+        if (adapter) {
+          const sharedRuntimeCapabilities = new Set([
+            "refund.create",
+            "refund.status",
+            "settlement.list"
+          ]);
+          const missingExecutable = certification.capabilities.filter((capability) => {
+            if (sharedRuntimeCapabilities.has(capability)) return false;
+            if (!advertised.has(capability)) return true;
+            if (capability === "token.resend") return typeof adapter!.resendToken !== "function";
+            if (capability === "device.list") return typeof adapter!.listDevices !== "function";
+            if (capability === "device.status") return typeof adapter!.getDeviceStatus !== "function";
+            return false;
+          });
+          checks.push(check(
+            "capabilities.executable_contract",
+            missingExecutable.length === 0 ? "PASS" : "FAIL",
+            missingExecutable.length === 0
+              ? "Declared capabilities have executable control-plane contracts"
+              : `Capabilities are declared but not executable: ${missingExecutable.join(", ")}`,
+            "REQUIRED",
+            { missing: missingExecutable }
+          ));
+        } else {
+          checks.push(check(
+            "capabilities.executable_contract",
+            "FAIL",
+            "Executable capability contracts cannot be verified without an operational adapter"
+          ));
+        }
+
+        const canProbeProvider = Boolean(
+          adapter && runtime && urlValid && credentialOkay && connectorEnabled && connectorOperational
+        );
+        if (canProbeProvider) {
+          const health = await adapter!.healthCheck();
           checks.push(check(
             "provider.health",
             health.status === "HEALTHY" || health.status === "DEGRADED" ? "PASS" : "FAIL",
@@ -205,16 +261,11 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
               ...(health.details ? { details: health.details } : {})
             }
           ));
-        } catch (error) {
-          checks.push(check(
-            "adapter.registered",
-            "FAIL",
-            error instanceof Error ? error.message : "Provider adapter could not be instantiated"
-          ));
+        } else {
           checks.push(check(
             "provider.health",
             "SKIP",
-            "Health check skipped because the adapter is not operational"
+            "Provider health request skipped because transport, credentials, runtime or connector state failed preflight"
           ));
         }
 
