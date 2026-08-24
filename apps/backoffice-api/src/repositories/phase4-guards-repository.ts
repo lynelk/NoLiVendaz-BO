@@ -145,11 +145,11 @@ export async function approveCertificationSafely(
     const provider = (await client.query(
       `UPDATE providers
           SET status='CERTIFIED',updated_at=now()
-        WHERE id=$1 AND status IN ('DEVELOPMENT','SANDBOX','CERTIFIED')
+        WHERE id=$1 AND status IN ('SANDBOX','CERTIFIED')
         RETURNING id,status`,
       [run.provider_id]
     )).rows[0];
-    if (!provider) throw new Error("PROVIDER_LIFECYCLE_NOT_CERTIFIABLE");
+    if (!provider) throw new Error("PROVIDER_MUST_BE_IN_SANDBOX_BEFORE_CERTIFICATION");
 
     const updated = (await client.query(
       `UPDATE provider_certification_runs
