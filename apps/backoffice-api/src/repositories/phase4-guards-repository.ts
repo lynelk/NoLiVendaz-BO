@@ -97,6 +97,36 @@ export async function validateSupportAssignee(
   });
 }
 
+export async function failCertificationRun(
+  principal: Principal,
+  runId: string,
+  errorMessage: string
+): Promise<void> {
+  await withTenantContext(context(principal), async (client) => {
+    const updated = await client.query(
+      `UPDATE provider_certification_runs
+          SET status='FAILED',completed_at=COALESCE(completed_at,now()),
+              summary=summary || jsonb_build_object('executionError',$2)
+        WHERE id=$1 AND status='RUNNING'
+        RETURNING id`,
+      [runId, errorMessage]
+    );
+    if (updated.rowCount === 1) {
+      await client.query(
+        `INSERT INTO audit_logs(
+           tenant_id,actor_user_id,action,resource_type,resource_id,after_state
+         ) VALUES($1,$2,'provider.certification.failed','certification_run',$3,$4::jsonb)`,
+        [
+          principal.tenantId,
+          principal.userId,
+          runId,
+          JSON.stringify({ status: "FAILED", executionError: errorMessage })
+        ]
+      );
+    }
+  });
+}
+
 export async function approveCertificationSafely(
   principal: Principal,
   runId: string
