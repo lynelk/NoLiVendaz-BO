@@ -1,0 +1,8 @@
+"use server";
+import { createHash } from "node:crypto";
+import { revalidatePath } from "next/cache";
+import { apiPost } from "../../lib/api";
+function transactionId(formData:FormData){const value=formData.get("transactionId");if(typeof value!=="string"||!/^[0-9a-f-]{36}$/i.test(value))throw new Error("INVALID_TRANSACTION_ID");return value;}
+export async function queryOriginalProvider(formData:FormData){const id=transactionId(formData);await apiPost(`/api/v1/transactions/${id}/query-provider`);revalidatePath(`/transactions/${id}`);revalidatePath("/");}
+export async function requestRefund(formData:FormData){const id=transactionId(formData);const amount=String(formData.get("amount")??"").trim();const reason=String(formData.get("reason")??"").trim();if(!/^\d+(\.\d{1,6})?$/.test(amount)||Number(amount)<=0)throw new Error("INVALID_REFUND_AMOUNT");if(reason.length<5)throw new Error("REFUND_REASON_REQUIRED");const digest=createHash("sha256").update(`${id}|${amount}|${reason}`).digest("hex").slice(0,40);const idempotencyKey=`bo-refund-${digest}`;await apiPost(`/api/v1/transactions/${id}/refunds`,{amount,reason,idempotencyKey});revalidatePath(`/transactions/${id}`);revalidatePath("/finance");revalidatePath("/");}
+export async function openSupportCase(formData:FormData){const id=transactionId(formData);const title=String(formData.get("title")??"").trim(),description=String(formData.get("description")??"").trim(),priority=String(formData.get("priority")??"MEDIUM");if(title.length<3)throw new Error("SUPPORT_TITLE_REQUIRED");await apiPost(`/api/v1/transactions/${id}/support-cases`,{category:"TRANSACTION_UNKNOWN",priority,title,...(description?{description}:{})});revalidatePath(`/transactions/${id}`);revalidatePath("/support");revalidatePath("/");}

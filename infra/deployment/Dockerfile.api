@@ -1,0 +1,15 @@
+FROM node:22-alpine
+
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
+COPY . .
+RUN pnpm install --no-frozen-lockfile \
+  && pnpm --filter @nolivendaz/backoffice-api... build \
+  && chown -R node:node /app
+
+ENV NODE_ENV=production
+ENV API_HOST=0.0.0.0
+ENV API_PORT=4000
+USER node
+EXPOSE 4000
+CMD ["node","apps/backoffice-api/dist/server.js"]

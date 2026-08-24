@@ -85,11 +85,13 @@ export function createProviderAdapter(
 
 export type VendExecutionResult =
   | { outcome: "CONFIRMED"; response: VendResponse }
-  | { outcome: "FAILED" | "UNKNOWN"; error: string; httpStatus?: number };
+  | { outcome: "FAILED"; error: string; httpStatus?: number }
+  | { outcome: "UNKNOWN"; error: string; httpStatus?: number };
 
 export type RefundExecutionResult =
   | { outcome: "CONFIRMED"; response: RefundResponse }
-  | { outcome: "FAILED" | "UNKNOWN"; error: string; httpStatus?: number };
+  | { outcome: "FAILED"; error: string; httpStatus?: number }
+  | { outcome: "UNKNOWN"; error: string; httpStatus?: number };
 
 function classify(error: unknown) {
   const message = error instanceof Error ? error.message : "UNKNOWN_PROVIDER_ERROR";

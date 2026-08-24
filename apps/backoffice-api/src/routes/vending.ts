@@ -58,9 +58,18 @@ export async function registerVendingRoutes(app: FastifyInstance): Promise<void>
 
       try {
         const input = {
-          ...parsed.data,
+          merchantId: parsed.data.merchantId,
+          serviceId: parsed.data.serviceId,
+          amount: parsed.data.amount,
+          currency: parsed.data.currency,
+          paymentReference: parsed.data.paymentReference,
+          idempotencyKey: parsed.data.idempotencyKey,
           correlationId: parsed.data.correlationId ?? randomUUID(),
-          environment: requiredEnvironment
+          environment: requiredEnvironment,
+          ...(parsed.data.productId ? { productId: parsed.data.productId } : {}),
+          ...(parsed.data.siteId ? { siteId: parsed.data.siteId } : {}),
+          ...(parsed.data.customerReference ? { customerReference: parsed.data.customerReference } : {}),
+          ...(parsed.data.metadata ? { metadata: parsed.data.metadata } : {})
         };
 
         await validateVendInput(request.principal!, {

@@ -1,0 +1,3 @@
+import { NextResponse,type NextRequest } from "next/server";
+export function proxy(request:NextRequest){const p=request.nextUrl.pathname;if(p==="/login"||p.startsWith("/auth/")||p.startsWith("/_next/"))return NextResponse.next();if(process.env.NODE_ENV!=="production"&&process.env.BACKOFFICE_DEV_BEARER_TOKEN)return NextResponse.next();if(!request.cookies.get("nolivendaz_access_token")?.value){const url=new URL("/login",request.url);url.searchParams.set("next",`${p}${request.nextUrl.search}`);return NextResponse.redirect(url);}return NextResponse.next();}
+export const config={matcher:["/((?!favicon.ico|robots.txt).*)"]};
