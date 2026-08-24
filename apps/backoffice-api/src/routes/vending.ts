@@ -14,6 +14,9 @@ import {
   completeVendDispatch,
   validateVendInput
 } from "../repositories/phase3-safety-repository.js";
+import {
+  getTransactionMetadata
+} from "../repositories/transaction-metadata-repository.js";
 
 const schema = z.object({
   merchantId: z.uuid(),
@@ -108,7 +111,12 @@ export async function registerVendingRoutes(app: FastifyInstance): Promise<void>
           });
         }
 
+        const persistedMetadata = await getTransactionMetadata(
+          request.principal!,
+          routed.transactionId
+        );
         const providerMetadata = {
+          ...persistedMetadata,
           ...(input.metadata ?? {}),
           ...(routed.providerMerchantId
             ? { providerMerchantId: routed.providerMerchantId }
@@ -117,6 +125,12 @@ export async function registerVendingRoutes(app: FastifyInstance): Promise<void>
             ? { providerSiteId: routed.providerSiteId }
             : {})
         };
+
+        const customerReference = input.customerReference ?? (
+          typeof persistedMetadata.customerReference === "string"
+            ? persistedMetadata.customerReference
+            : undefined
+        );
 
         const result = await executeVendSafely(
           routed.providerType,
@@ -128,9 +142,7 @@ export async function registerVendingRoutes(app: FastifyInstance): Promise<void>
             idempotencyKey: input.idempotencyKey,
             serviceCode: routed.serviceCode,
             ...(routed.productCode ? { productCode: routed.productCode } : {}),
-            ...(input.customerReference
-              ? { customerReference: input.customerReference }
-              : {}),
+            ...(customerReference ? { customerReference } : {}),
             amount: input.amount,
             currency: input.currency,
             ...(Object.keys(providerMetadata).length > 0
