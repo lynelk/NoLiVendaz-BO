@@ -31,14 +31,11 @@ const syncSchema=z.object({
   source:z.enum(["NOLI","CPAY"]),
   sourceUpdatedAt:z.iso.datetime()
 }).superRefine((value,ctx)=>{
-  if(value.identityStatus==="VERIFIED" && (!value.identityProviderReference || !value.identityVerifiedAt)){
-    ctx.addIssue({code:"custom",message:"VERIFIED identity state requires an authoritative provider reference and verification timestamp."});
-  }
   if(value.identityNumberMask && !isSafeIdentityMask(value.identityNumberMask)){
     ctx.addIssue({code:"custom",message:"Only strongly masked identity values with at most four visible characters may be synchronized."});
   }
-  if(value.identityConfigured && (!value.identityType || !value.identityCountry || !value.identityNumberMask)){
-    ctx.addIssue({code:"custom",message:"Configured identity state requires document type, country and a safe masked value."});
+  if(value.identityConsentAccepted===true && (!value.consentVersion || !value.consentAcceptedAt)){
+    ctx.addIssue({code:"custom",message:"Accepted identity consent requires a consent version and acceptance timestamp."});
   }
 });
 
@@ -68,6 +65,16 @@ function authorizeSync(request:any,reply:any){
   return true;
 }
 
+function identitySyncError(reply:any,error:unknown){
+  const message=error instanceof Error?error.message:'Unknown error';
+  if(message==='STALE_IDENTITY_SYNC')return reply.code(409).send({error:'STALE_IDENTITY_SYNC',message:'A newer customer identity state is already stored.'});
+  if(message==='CONFLICTING_IDENTITY_SYNC_TIMESTAMP')return reply.code(409).send({error:'CONFLICTING_IDENTITY_SYNC_TIMESTAMP',message:'A different identity event already exists for the same source timestamp.'});
+  if(message==='VERIFIED_REQUIRES_AUTHORITATIVE_REFERENCE')return reply.code(400).send({error:'IDENTITY_SYNC_FAILED',message:'VERIFIED identity state requires an authoritative provider reference and verification timestamp.'});
+  if(message==='CONFIGURED_IDENTITY_REQUIRES_MASKED_EVIDENCE')return reply.code(400).send({error:'IDENTITY_SYNC_FAILED',message:'Configured identity state requires type, country and a strongly masked identity value.'});
+  if(message==='IDENTITY_CONSENT_REQUIRES_EVIDENCE')return reply.code(400).send({error:'IDENTITY_SYNC_FAILED',message:'Accepted identity consent requires versioned timestamped evidence.'});
+  return reply.code(409).send({error:'IDENTITY_SYNC_FAILED',message});
+}
+
 export async function registerCustomerIdentityRoutes(app:FastifyInstance):Promise<void>{
   app.get('/api/v1/customers',{preHandler:[app.authenticate,requirePermission('customer.read')]},async request=>({data:await repo.listCustomers(request.principal!)}));
   app.get('/api/v1/customers/:customerId/identity',{preHandler:[app.authenticate,requirePermission('customer.identity.read')]},async(request,reply)=>{
@@ -80,11 +87,7 @@ export async function registerCustomerIdentityRoutes(app:FastifyInstance):Promis
     if(!authorizeSync(request,reply))return;
     const parsed=syncSchema.safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:'VALIDATION_ERROR',issues:parsed.error.issues});
-    try{return{data:await repo.syncCustomerIdentity(request.principal!,parsed.data)}}catch(error){
-      const message=error instanceof Error?error.message:'Unknown error';
-      if(message==='STALE_IDENTITY_SYNC')return reply.code(409).send({error:'STALE_IDENTITY_SYNC',message:'A newer customer identity state is already stored.'});
-      return reply.code(message==='VERIFIED_REQUIRES_AUTHORITATIVE_REFERENCE'?400:409).send({error:'IDENTITY_SYNC_FAILED',message});
-    }
+    try{return{data:await repo.syncCustomerIdentity(request.principal!,parsed.data)}}catch(error){return identitySyncError(reply,error);}
   });
 
   app.put('/api/v1/customer-identity/capabilities-sync',{preHandler:[app.authenticate,requirePermission('customer.identity.capability.sync')]},async(request,reply)=>{
@@ -93,7 +96,9 @@ export async function registerCustomerIdentityRoutes(app:FastifyInstance):Promis
     if(!parsed.success)return reply.code(400).send({error:'VALIDATION_ERROR',issues:parsed.error.issues});
     try{return{data:await repo.syncIdentityProviderCapabilities(request.principal!,parsed.data.capabilities)}}catch(error){
       const message=error instanceof Error?error.message:'Unknown error';
-      return reply.code(message.startsWith('STALE_CAPABILITY_SYNC:')?409:400).send({error:message.startsWith('STALE_CAPABILITY_SYNC:')?'STALE_CAPABILITY_SYNC':'CAPABILITY_SYNC_FAILED',message});
+      if(message.startsWith('STALE_CAPABILITY_SYNC:'))return reply.code(409).send({error:'STALE_CAPABILITY_SYNC',message});
+      if(message.startsWith('CONFLICTING_CAPABILITY_SYNC_TIMESTAMP:'))return reply.code(409).send({error:'CONFLICTING_CAPABILITY_SYNC_TIMESTAMP',message});
+      return reply.code(400).send({error:'CAPABILITY_SYNC_FAILED',message});
     }
   });
 }
