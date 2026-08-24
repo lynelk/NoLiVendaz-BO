@@ -6,7 +6,7 @@ import { config } from "../config.js";
 
 const schema=z.object({
   tenantCode:z.string().min(2).max(64),
-  externalSubject:z.string().min(1).max(300),
+  externalSubject:z.string().min(1).max(200),
   email:z.email().optional(),
   emailVerified:z.boolean().default(false),
   displayName:z.string().max(200).optional()
