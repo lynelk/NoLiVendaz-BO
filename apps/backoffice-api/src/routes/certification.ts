@@ -3,12 +3,12 @@ import { EnvironmentSecretResolver, parseRuntimeConfiguration } from "@nolivenda
 import { createProviderAdapter } from "@nolivendaz/provider-orchestrator";
 import { requirePermission } from "../auth.js";
 import {
-  approveCertification,
   type CertificationCheckInput,
   finishCertificationRun,
   listCertificationRuns,
   startCertificationRun
 } from "../repositories/phase4-repository.js";
+import { approveCertificationSafely } from "../repositories/phase4-guards-repository.js";
 
 const secrets = new EnvironmentSecretResolver();
 
@@ -116,23 +116,56 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
             "settlement.list": Boolean(runtime.endpoints.settlements),
             "webhook.receive": true
           };
-          const missing = certification.capabilities.filter(
+          const missingEndpoints = certification.capabilities.filter(
             (capability) => endpointChecks[capability] === false
           );
           checks.push(check(
             "capabilities.endpoint_contract",
-            missing.length === 0 ? "PASS" : "FAIL",
-            missing.length === 0
-              ? "Declared capabilities have matching runtime contracts"
-              : `Missing endpoint contracts for: ${missing.join(", ")}`,
+            missingEndpoints.length === 0 ? "PASS" : "FAIL",
+            missingEndpoints.length === 0
+              ? "Declared capabilities have matching runtime endpoints"
+              : `Missing endpoint contracts for: ${missingEndpoints.join(", ")}`,
             "REQUIRED",
-            { missing }
+            { missing: missingEndpoints }
+          ));
+
+          const fields = runtime.fields ?? {};
+          const missingFields: string[] = [];
+          const requireField = (capability: string, field: unknown, label: string) => {
+            if (certification.capabilities.includes(capability) && !field) missingFields.push(`${capability}:${label}`);
+          };
+          requireField("vend.initiate", fields.providerTransactionId, "providerTransactionId");
+          requireField("vend.initiate", fields.vendStatus ?? fields.providerStatus, "vendStatus/providerStatus");
+          requireField("vend.status", fields.providerTransactionId, "providerTransactionId");
+          requireField("refund.create", fields.providerRefundId, "providerRefundId");
+          requireField("refund.create", fields.refundStatus ?? fields.providerStatus, "refundStatus/providerStatus");
+          requireField("refund.status", fields.providerRefundId, "providerRefundId");
+          requireField("refund.status", fields.refundStatus ?? fields.providerStatus, "refundStatus/providerStatus");
+          requireField("settlement.list", fields.settlementId, "settlementId");
+          requireField("settlement.list", fields.settlementCurrency, "settlementCurrency");
+          requireField("settlement.list", fields.settlementGrossAmount, "settlementGrossAmount");
+          requireField("settlement.list", fields.settlementStatus, "settlementStatus");
+          requireField("settlement.list", fields.settlementPeriodStart, "settlementPeriodStart");
+          requireField("settlement.list", fields.settlementPeriodEnd, "settlementPeriodEnd");
+          checks.push(check(
+            "capabilities.field_contract",
+            missingFields.length === 0 ? "PASS" : "FAIL",
+            missingFields.length === 0
+              ? "Required normalization fields are configured"
+              : `Missing field mappings: ${missingFields.join(", ")}`,
+            "REQUIRED",
+            { missing: missingFields }
           ));
         } else {
           checks.push(check(
             "capabilities.endpoint_contract",
             "FAIL",
             "Endpoint contracts cannot be checked until runtime configuration is valid"
+          ));
+          checks.push(check(
+            "capabilities.field_contract",
+            "FAIL",
+            "Field contracts cannot be checked until runtime configuration is valid"
           ));
         }
 
@@ -215,7 +248,7 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
     async (request, reply) => {
       try {
         return {
-          data: await approveCertification(
+          data: await approveCertificationSafely(
             request.principal!,
             (request.params as { runId: string }).runId
           )
