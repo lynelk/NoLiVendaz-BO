@@ -1,0 +1,62 @@
+import type { Principal } from "@nolivendaz/canonical-models";
+import { withTenantContext } from "@nolivendaz/database";
+
+const context = (principal: Principal) => ({
+  tenantId: principal.tenantId,
+  isPlatformAdmin: principal.isPlatformAdmin,
+  userId: principal.userId
+});
+
+export async function listProviderConnectors(principal: Principal, providerId: string) {
+  return withTenantContext(context(principal), async (client) => {
+    const provider = (await client.query(
+      `SELECT id,name,code,status,provider_type AS "providerType"
+         FROM providers WHERE id=$1`,
+      [providerId]
+    )).rows[0];
+    if (!provider) throw new Error("PROVIDER_NOT_FOUND");
+
+    const connectors = await client.query(
+      `SELECT
+         pc.id,pc.name,pc.environment,pc.api_version AS "apiVersion",
+         pc.base_url AS "baseUrl",pc.auth_type AS "authType",
+         pc.timeout_ms AS "timeoutMs",pc.status,pc.enabled,
+         pc.created_at AS "createdAt",pc.updated_at AS "updatedAt",
+         COALESCE((
+           SELECT json_agg(c.code ORDER BY c.code)
+             FROM connector_capabilities cc
+             JOIN capabilities c ON c.id=cc.capability_id
+            WHERE cc.connector_id=pc.id AND cc.enabled=true
+         ),'[]') AS capabilities,
+         (SELECT phe.status FROM provider_health_events phe
+           WHERE phe.connector_id=pc.id ORDER BY phe.checked_at DESC LIMIT 1) AS "healthStatus",
+         (SELECT phe.checked_at FROM provider_health_events phe
+           WHERE phe.connector_id=pc.id ORDER BY phe.checked_at DESC LIMIT 1) AS "healthCheckedAt",
+         (SELECT pcr.status FROM provider_certification_runs pcr
+           WHERE pcr.connector_id=pc.id ORDER BY pcr.requested_at DESC LIMIT 1) AS "certificationStatus"
+       FROM provider_connectors pc
+       WHERE pc.provider_id=$1
+       ORDER BY pc.environment,pc.name`,
+      [providerId]
+    );
+    return { provider, connectors: connectors.rows };
+  });
+}
+
+export async function getConnectorCapabilities(principal: Principal, connectorId: string) {
+  return withTenantContext(context(principal), async (client) => {
+    const connector = (await client.query(
+      `SELECT pc.id,pc.provider_id AS "providerId",pc.name,pc.environment,pc.status,pc.enabled
+         FROM provider_connectors pc WHERE pc.id=$1`,
+      [connectorId]
+    )).rows[0];
+    if (!connector) throw new Error("CONNECTOR_NOT_FOUND");
+    const capabilities = await client.query<{ code: string }>(
+      `SELECT c.code FROM connector_capabilities cc
+       JOIN capabilities c ON c.id=cc.capability_id
+       WHERE cc.connector_id=$1 AND cc.enabled=true ORDER BY c.code`,
+      [connectorId]
+    );
+    return { ...connector, capabilities: capabilities.rows.map((row) => row.code) };
+  });
+}
