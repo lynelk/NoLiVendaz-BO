@@ -3,6 +3,8 @@ import fastifyJwt from "@fastify/jwt";
 import { pool } from "@nolivendaz/database";
 import { config } from "./config.js";
 import { registerAuth } from "./auth.js";
+import { registerAuthExchangeRoute } from "./routes/auth-exchange.js";
+import { registerObservability } from "./observability.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerProviderLifecycleRoutes } from "./routes/provider-lifecycle.js";
 import { registerProviderHealthRoutes } from "./routes/provider-health.js";
@@ -16,11 +18,14 @@ import { registerCertificationRoutes } from "./routes/certification.js";
 import { registerOperationsRoutes } from "./routes/operations.js";
 import { registerRecoveryRoutes } from "./routes/recovery.js";
 import { registerOperatorRoutes } from "./routes/operator.js";
+import { registerManagementRoutes } from "./routes/management.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, requestIdHeader: "x-correlation-id" });
   await app.register(fastifyJwt, { secret: config.JWT_SECRET });
   await registerAuth(app);
+  await registerObservability(app);
+  await registerAuthExchangeRoute(app);
   app.get("/health", async (_request, reply) => {
     try { await pool.query("SELECT 1"); return { status: "ok", database: "ok", service: "backoffice-api" }; }
     catch (error) { app.log.error({ err: error }, "Database health check failed"); return reply.code(503).send({ status: "degraded", database: "unavailable", service: "backoffice-api" }); }
@@ -29,6 +34,7 @@ export async function buildApp() {
   await registerProviderRoutes(app);
   await registerProviderLifecycleRoutes(app);
   await registerOperatorRoutes(app);
+  await registerManagementRoutes(app);
   await registerTransactionRoutes(app);
   await registerProviderHealthRoutes(app);
   await registerWebhookRoutes(app);
