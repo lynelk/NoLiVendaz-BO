@@ -15,6 +15,7 @@ import { registerSupportRoutes } from "./routes/support.js";
 import { registerCertificationRoutes } from "./routes/certification.js";
 import { registerOperationsRoutes } from "./routes/operations.js";
 import { registerRecoveryRoutes } from "./routes/recovery.js";
+import { registerOperatorRoutes } from "./routes/operator.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, requestIdHeader: "x-correlation-id" });
@@ -27,6 +28,7 @@ export async function buildApp() {
   app.get("/api/v1/auth/context", { preHandler: [app.authenticate] }, async request => ({ data: request.principal }));
   await registerProviderRoutes(app);
   await registerProviderLifecycleRoutes(app);
+  await registerOperatorRoutes(app);
   await registerTransactionRoutes(app);
   await registerProviderHealthRoutes(app);
   await registerWebhookRoutes(app);
