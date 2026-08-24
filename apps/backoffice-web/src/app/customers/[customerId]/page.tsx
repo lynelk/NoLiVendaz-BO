@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { apiGet, BackOfficeApiError } from "../../../lib/api";
 import { dateTime } from "../../../lib/format";
-import type { CustomerIdentityRecord } from "../../../lib/types";
+import type { CustomerIdentityRecord, CustomerServiceAccessPolicy } from "../../../lib/types";
 import { StatusPill } from "../../../components/status-pill";
 
 function maskPhone(value?:string|null){
@@ -24,10 +24,21 @@ export default async function Page({params}:{params:Promise<{customerId:string}>
   let customer:CustomerIdentityRecord;
   try{customer=await apiGet<CustomerIdentityRecord>(`/api/v1/customers/${encodeURIComponent(customerId)}/identity`);}
   catch(error){if(error instanceof BackOfficeApiError&&error.status===404)notFound();throw error;}
+  let policy:CustomerServiceAccessPolicy|null=null;
+  try{policy=await apiGet<CustomerServiceAccessPolicy>("/api/v1/customer-identity/service-access-policy");}catch{policy=null;}
+
+  const satisfied=new Set<string>();
+  if(customer.profile_setup_complete)satisfied.add("PROFILE");
+  if(customer.terms_accepted)satisfied.add("TERMS");
+  if(customer.phone_verified_at)satisfied.add("PHONE_VERIFICATION");
+  if(customer.identity_configured)satisfied.add("IDENTITY");
+  if(customer.identity_consent_accepted)satisfied.add("IDENTITY_CONSENT");
+  if(customer.identity_status==="VERIFIED")satisfied.add("IDENTITY_VERIFICATION");
 
   return <>
-    <header className="page-head"><div><span className="eyebrow">Customer assurance</span><h1>{customer.display_name||customer.external_reference}</h1><p>Verification evidence and service-access readiness synchronized from NOLI/CPay. Raw identification numbers are not exposed in this workspace.</p></div><div className="actions"><Link className="button button-secondary" href="/customers">Back to customers</Link></div></header>
+    <header className="page-head"><div><span className="eyebrow">Customer assurance</span><h1>{customer.display_name||customer.external_reference}</h1><p>Verification evidence and protected-service readiness synchronized from NOLI/CPay. Raw identification numbers are not exposed in this workspace.</p></div><div className="actions"><Link className="button button-secondary" href="/customers">Back to customers</Link><Link className="button button-secondary" href="/customers/identity-capabilities">Policy & provider coverage</Link></div></header>
     <section className="grid detail-grid">
+      <article className="card detail"><span>Profile setup</span><StatusPill value={customer.profile_setup_complete?"READY":"PROFILE_REQUIRED"}/></article>
       <article className="card detail"><span>Phone verification</span><StatusPill value={customer.phone_verified_at?"VERIFIED":"PHONE_REQUIRED"}/></article>
       <article className="card detail"><span>Identity verification</span><StatusPill value={customer.identity_status}/></article>
       <article className="card detail"><span>Protected service access</span><StatusPill value={customer.protected_service_access}/></article>
@@ -50,12 +61,18 @@ export default async function Page({params}:{params:Promise<{customerId:string}>
           <div className="detail"><span>Provider reference</span><strong>{shown(customer.identity_provider_reference)}</strong></div>
           <div className="detail"><span>Verified at</span><strong>{dateTime(customer.identity_verified_at)}</strong></div>
           <div className="detail"><span>Source</span><strong>{shown(customer.identity_source)}</strong></div>
+          <div className="detail"><span>Source event time</span><strong>{dateTime(customer.identity_source_updated_at)}</strong></div>
           <div className="detail"><span>Last synchronized</span><strong>{dateTime(customer.identity_last_synced_at)}</strong></div>
+        </div></article>
+        <article className="card"><h2>Protected-service gate evaluation</h2><p>Policy {shown(customer.service_access_policy_version||policy?.baselineVersion)} · {customer.protected_service}</p><div className="stack">
+          {(policy?.requirements??[]).map(requirement=><div className="detail" key={requirement.code}><span>{requirement.label}</span><StatusPill value={satisfied.has(requirement.code)?"READY":"REQUIRED"}/></div>)}
+          {!policy&&<div className="detail"><span>Missing controls</span><strong>{customer.protected_service_missing.length?customer.protected_service_missing.join(", "):"None"}</strong></div>}
         </div></article>
       </div>
       <div className="stack">
-        <article className="card"><h2>Consent evidence</h2><div className="detail"><span>Consent version</span><strong>{shown(customer.consent_version)}</strong><span>Accepted at</span><strong>{dateTime(customer.consent_accepted_at)}</strong></div></article>
-        <article className="card"><h2>Operational interpretation</h2><div className="detail"><span>Service access</span><StatusPill value={customer.protected_service_access}/><span>Rule</span><strong>Protected vending requires a verified registered phone and an authoritative VERIFIED identity state.</strong><span>Privacy boundary</span><strong>Use masked identifiers and provider references for investigation. Do not paste raw identification numbers into support or audit notes.</strong></div></article>
+        <article className="card"><h2>Consent evidence</h2><div className="detail"><span>Terms accepted</span><StatusPill value={customer.terms_accepted?"READY":"TERMS_REQUIRED"}/><span>Identity consent</span><StatusPill value={customer.identity_consent_accepted?"READY":"IDENTITY_CONSENT_REQUIRED"}/><span>Consent version</span><strong>{shown(customer.consent_version)}</strong><span>Accepted at</span><strong>{dateTime(customer.consent_accepted_at)}</strong></div></article>
+        <article className="card"><h2>Operational interpretation</h2><div className="detail"><span>Service access</span><StatusPill value={customer.protected_service_access}/><span>Missing gates</span><strong>{customer.protected_service_missing.length?customer.protected_service_missing.join(", "):"None"}</strong><span>Rule</span><strong>Protected vending requires every current policy gate, including an authoritative VERIFIED identity result.</strong><span>Privacy boundary</span><strong>Use masked identifiers and provider references for investigation. Never paste raw identification numbers into support, incident or audit notes.</strong></div></article>
+        <article className="card"><h2>Synchronization controls</h2><div className="detail"><span>Policy source</span><strong>{shown(customer.service_access_source)}</strong><span>Policy synchronized</span><strong>{dateTime(customer.service_access_synced_at)}</strong><span>Ordering rule</span><strong>Older source events are rejected and cannot overwrite newer assurance state.</strong></div></article>
         <article className="card"><h2>Record timestamps</h2><div className="detail"><span>Created</span><strong>{dateTime(customer.created_at)}</strong><span>Updated</span><strong>{dateTime(customer.updated_at)}</strong></div></article>
       </div>
     </section>
