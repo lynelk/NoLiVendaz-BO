@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse,type NextRequest } from "next/server";
-import { oidcConfig } from "../../../lib/oidc.js";
+import { oidcConfig } from "../../../lib/oidc";
 
 export async function GET(request:NextRequest){
   const cs=await cookies();
