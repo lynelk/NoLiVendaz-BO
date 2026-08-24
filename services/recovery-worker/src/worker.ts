@@ -1,14 +1,15 @@
 import { runRecoveryEscalations } from "./escalation.js";
 import { runAllTenantRecoveryCycles } from "./index.js";
 
-const intervalMs = Math.max(
-  60_000,
-  Number(process.env.RECOVERY_WORKER_INTERVAL_MS ?? 300_000)
-);
-const batchSize = Math.max(
-  1,
-  Math.min(200, Number(process.env.RECOVERY_WORKER_BATCH_SIZE ?? 25))
-);
+function finiteInteger(name: string, fallback: number, min: number, max?: number): number {
+  const parsed = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  const integer = Math.trunc(parsed);
+  return Math.min(max ?? Number.MAX_SAFE_INTEGER, Math.max(min, integer));
+}
+
+const intervalMs = finiteInteger("RECOVERY_WORKER_INTERVAL_MS", 300_000, 60_000);
+const batchSize = finiteInteger("RECOVERY_WORKER_BATCH_SIZE", 25, 1, 200);
 let stopping = false;
 
 process.on("SIGTERM", () => { stopping = true; });
