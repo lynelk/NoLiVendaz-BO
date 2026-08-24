@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { apiGet, BackOfficeApiError } from "../lib/api.js";
-import { money } from "../lib/format.js";
-import type { OperationsQueues, TransactionSummary } from "../lib/types.js";
-import { StatusPill } from "../components/status-pill.js";
+import { apiGet, BackOfficeApiError } from "../lib/api";
+import { money } from "../lib/format";
+import type { OperationsQueues, TransactionSummary } from "../lib/types";
+import { StatusPill } from "../components/status-pill";
 
 export default async function CommandCentrePage() {
   let queues: OperationsQueues | null = null;
