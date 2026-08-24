@@ -4,7 +4,12 @@ ALTER TABLE transactions
   ADD COLUMN provider_submission_at timestamptz,
   ADD COLUMN refund_required boolean NOT NULL DEFAULT false,
   ADD COLUMN settlement_blocked boolean NOT NULL DEFAULT false,
-  ADD COLUMN financial_hold_reason text;
+  ADD COLUMN financial_hold_reason text,
+  ADD COLUMN vend_dispatch_state varchar(24) NOT NULL DEFAULT 'READY'
+    CHECK (vend_dispatch_state IN ('READY','DISPATCHING','COMPLETED','FAILED','UNKNOWN')),
+  ADD COLUMN vend_dispatch_lease_until timestamptz,
+  ADD COLUMN vend_dispatch_attempts integer NOT NULL DEFAULT 0 CHECK (vend_dispatch_attempts >= 0),
+  ADD COLUMN vend_dispatched_at timestamptz;
 
 CREATE TABLE route_decisions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -28,7 +33,8 @@ CREATE TABLE refunds (
   amount numeric(20,6) NOT NULL CHECK (amount > 0),
   currency char(3) NOT NULL,
   reason text NOT NULL,
-  status varchar(32) NOT NULL DEFAULT 'REQUESTED' CHECK (status IN ('REQUESTED','APPROVED','PENDING','COMPLETED','FAILED','UNKNOWN','REJECTED','CANCELLED')),
+  status varchar(32) NOT NULL DEFAULT 'REQUESTED'
+    CHECK (status IN ('REQUESTED','APPROVED','PENDING','COMPLETED','FAILED','UNKNOWN','REJECTED','CANCELLED')),
   provider_refund_id varchar(200),
   provider_status varchar(120),
   idempotency_key varchar(200) NOT NULL,
@@ -38,6 +44,11 @@ CREATE TABLE refunds (
   approved_at timestamptz,
   completed_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now(),
+  dispatch_state varchar(24) NOT NULL DEFAULT 'NOT_READY'
+    CHECK (dispatch_state IN ('NOT_READY','READY','DISPATCHING','COMPLETED','FAILED','UNKNOWN')),
+  dispatch_lease_until timestamptz,
+  dispatch_attempts integer NOT NULL DEFAULT 0 CHECK (dispatch_attempts >= 0),
+  dispatch_started_at timestamptz,
   CHECK (approved_by IS NULL OR approved_by <> requested_by),
   UNIQUE (tenant_id, idempotency_key)
 );
@@ -56,7 +67,7 @@ CREATE TABLE provider_settlements (
   period_end timestamptz NOT NULL,
   fetched_at timestamptz NOT NULL DEFAULT now(),
   CHECK (period_end > period_start),
-  UNIQUE (connector_id, provider_settlement_id)
+  UNIQUE (tenant_id, connector_id, provider_settlement_id)
 );
 
 CREATE TABLE reconciliation_exceptions (
@@ -65,29 +76,48 @@ CREATE TABLE reconciliation_exceptions (
   transaction_id uuid REFERENCES transactions(id),
   provider_id uuid REFERENCES providers(id),
   exception_type varchar(80) NOT NULL,
-  severity varchar(20) NOT NULL DEFAULT 'MEDIUM' CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+  severity varchar(20) NOT NULL DEFAULT 'MEDIUM'
+    CHECK (severity IN ('LOW','MEDIUM','HIGH','CRITICAL')),
   amount numeric(20,6) CHECK (amount IS NULL OR amount >= 0),
   currency char(3),
   details jsonb NOT NULL DEFAULT '{}'::jsonb,
-  status varchar(24) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','INVESTIGATING','RESOLVED','IGNORED')),
+  status varchar(24) NOT NULL DEFAULT 'OPEN'
+    CHECK (status IN ('OPEN','INVESTIGATING','RESOLVED','IGNORED')),
   detected_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
-CREATE UNIQUE INDEX reconciliation_open_unique ON reconciliation_exceptions(tenant_id,transaction_id,exception_type) WHERE status IN ('OPEN','INVESTIGATING');
+CREATE UNIQUE INDEX reconciliation_open_unique
+  ON reconciliation_exceptions(tenant_id,transaction_id,exception_type)
+  WHERE status IN ('OPEN','INVESTIGATING');
 
 CREATE INDEX route_decisions_transaction_idx ON route_decisions(transaction_id);
 CREATE INDEX refunds_transaction_idx ON refunds(transaction_id,requested_at DESC);
-CREATE INDEX settlements_provider_period_idx ON provider_settlements(provider_id,period_start,period_end);
+CREATE INDEX refunds_dispatch_idx ON refunds(dispatch_state,dispatch_lease_until);
+CREATE INDEX transactions_vend_dispatch_idx ON transactions(vend_dispatch_state,vend_dispatch_lease_until);
+CREATE INDEX settlements_provider_period_idx ON provider_settlements(tenant_id,provider_id,period_start,period_end);
 CREATE INDEX reconciliation_open_idx ON reconciliation_exceptions(tenant_id,status,severity,detected_at DESC);
 
-ALTER TABLE route_decisions ENABLE ROW LEVEL SECURITY; ALTER TABLE route_decisions FORCE ROW LEVEL SECURITY;
-ALTER TABLE refunds ENABLE ROW LEVEL SECURITY; ALTER TABLE refunds FORCE ROW LEVEL SECURITY;
-ALTER TABLE provider_settlements ENABLE ROW LEVEL SECURITY; ALTER TABLE provider_settlements FORCE ROW LEVEL SECURITY;
-ALTER TABLE reconciliation_exceptions ENABLE ROW LEVEL SECURITY; ALTER TABLE reconciliation_exceptions FORCE ROW LEVEL SECURITY;
-CREATE POLICY route_decisions_tenant_policy ON route_decisions USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin()) WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
-CREATE POLICY refunds_tenant_policy ON refunds USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin()) WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
-CREATE POLICY provider_settlements_tenant_policy ON provider_settlements USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin()) WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
-CREATE POLICY reconciliation_tenant_policy ON reconciliation_exceptions USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin()) WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
+ALTER TABLE route_decisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE route_decisions FORCE ROW LEVEL SECURITY;
+ALTER TABLE refunds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE refunds FORCE ROW LEVEL SECURITY;
+ALTER TABLE provider_settlements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE provider_settlements FORCE ROW LEVEL SECURITY;
+ALTER TABLE reconciliation_exceptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconciliation_exceptions FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY route_decisions_tenant_policy ON route_decisions
+  USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin())
+  WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
+CREATE POLICY refunds_tenant_policy ON refunds
+  USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin())
+  WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
+CREATE POLICY provider_settlements_tenant_policy ON provider_settlements
+  USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin())
+  WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
+CREATE POLICY reconciliation_tenant_policy ON reconciliation_exceptions
+  USING (tenant_id=app.current_tenant_id() OR app.is_platform_admin())
+  WITH CHECK (tenant_id=app.current_tenant_id() OR app.is_platform_admin());
 
 INSERT INTO permissions(code,description) VALUES
  ('transaction.initiate','Create and dispatch a routed vending transaction'),
