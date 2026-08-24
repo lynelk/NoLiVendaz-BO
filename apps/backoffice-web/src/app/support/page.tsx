@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { apiGet, BackOfficeApiError } from "../../lib/api.js";
-import { dateTime } from "../../lib/format.js";
-import type { SupportCase } from "../../lib/types.js";
-import { StatusPill } from "../../components/status-pill.js";
+import { apiGet, BackOfficeApiError } from "../../lib/api";
+import { dateTime } from "../../lib/format";
+import type { SupportCase } from "../../lib/types";
+import { StatusPill } from "../../components/status-pill";
 
 export default async function SupportPage({
   searchParams
