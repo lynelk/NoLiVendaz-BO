@@ -7,6 +7,10 @@ import {
   listSupportCases,
   updateSupportCase
 } from "../repositories/phase4-repository.js";
+import {
+  validateSupportAssignee,
+  validateSupportCaseLinks
+} from "../repositories/phase4-guards-repository.js";
 
 const createSchema = z.object({
   category: z.enum(["TRANSACTION_UNKNOWN","REFUND","SETTLEMENT","PROVIDER","CUSTOMER","OTHER"]),
@@ -39,10 +43,29 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
       }
       try {
         const transactionId = (request.params as { transactionId: string }).transactionId;
-        const row = await createSupportCase(request.principal!, {
-          ...parsed.data,
+        await validateSupportCaseLinks(request.principal!, {
           transactionId,
-          source: "MANUAL"
+          ...(parsed.data.providerId ? { providerId: parsed.data.providerId } : {}),
+          ...(parsed.data.connectorId ? { connectorId: parsed.data.connectorId } : {}),
+          ...(parsed.data.refundId ? { refundId: parsed.data.refundId } : {}),
+          ...(parsed.data.reconciliationExceptionId
+            ? { reconciliationExceptionId: parsed.data.reconciliationExceptionId }
+            : {})
+        });
+        const row = await createSupportCase(request.principal!, {
+          category: parsed.data.category,
+          priority: parsed.data.priority,
+          title: parsed.data.title,
+          transactionId,
+          source: "MANUAL",
+          ...(parsed.data.description ? { description: parsed.data.description } : {}),
+          ...(parsed.data.providerId ? { providerId: parsed.data.providerId } : {}),
+          ...(parsed.data.connectorId ? { connectorId: parsed.data.connectorId } : {}),
+          ...(parsed.data.refundId ? { refundId: parsed.data.refundId } : {}),
+          ...(parsed.data.reconciliationExceptionId
+            ? { reconciliationExceptionId: parsed.data.reconciliationExceptionId }
+            : {}),
+          ...(parsed.data.metadata ? { metadata: parsed.data.metadata } : {})
         });
         return reply.code(201).send({ data: row });
       } catch (error) {
@@ -63,7 +86,13 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
         priority: z.string().optional(),
         limit: z.coerce.number().int().min(1).max(500).default(100)
       }).parse(request.query);
-      return { data: await listSupportCases(request.principal!, query) };
+      return {
+        data: await listSupportCases(request.principal!, {
+          limit: query.limit,
+          ...(query.status ? { status: query.status } : {}),
+          ...(query.priority ? { priority: query.priority } : {})
+        })
+      };
     }
   );
 
@@ -96,11 +125,17 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
         return reply.code(400).send({ error: "VALIDATION_ERROR", issues: parsed.error.issues });
       }
       try {
+        await validateSupportAssignee(request.principal!, parsed.data.assignedTo);
+        const input = {
+          ...(parsed.data.status ? { status: parsed.data.status } : {}),
+          ...(parsed.data.assignedTo !== undefined ? { assignedTo: parsed.data.assignedTo } : {}),
+          ...(parsed.data.note ? { note: parsed.data.note } : {})
+        };
         return {
           data: await updateSupportCase(
             request.principal!,
             (request.params as { caseId: string }).caseId,
-            parsed.data
+            input
           )
         };
       } catch (error) {
