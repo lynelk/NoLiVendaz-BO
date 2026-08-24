@@ -24,7 +24,6 @@ jobs:
       - run: pnpm repo:check
 
   application-quality:
-    if: ${{ hashFiles('apps/**/package.json', 'services/**/package.json', 'adapters/**/package.json', 'packages/**/package.json') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
