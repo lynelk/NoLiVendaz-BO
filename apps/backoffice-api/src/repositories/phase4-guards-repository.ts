@@ -133,13 +133,37 @@ export async function approveCertificationSafely(
 ) {
   return withTenantContext(context(principal), async (client) => {
     const run = (await client.query(
-      `SELECT * FROM provider_certification_runs WHERE id=$1 FOR UPDATE`,
+      `SELECT *,summary->>'configurationHash' AS configuration_hash
+         FROM provider_certification_runs
+        WHERE id=$1 FOR UPDATE`,
       [runId]
     )).rows[0];
     if (!run) throw new Error("CERTIFICATION_RUN_NOT_FOUND");
     if (run.status !== "PASSED") throw new Error("CERTIFICATION_RUN_NOT_PASSED");
     if (String(run.requested_by) === principal.userId) {
       throw new Error("MAKER_CHECKER_VIOLATION");
+    }
+
+    const currentHash = (await client.query<{hash:string|null}>(
+      `SELECT app.connector_certification_hash($1::uuid) AS hash`,
+      [run.connector_id]
+    )).rows[0]?.hash;
+    if (!run.configuration_hash || !currentHash || run.configuration_hash !== currentHash) {
+      throw new Error("CERTIFICATION_CONFIGURATION_CHANGED_RERUN_REQUIRED");
+    }
+
+    const connector = (await client.query(
+      `SELECT pc.enabled,pc.status,pc.environment
+         FROM provider_connectors pc
+        WHERE pc.id=$1`,
+      [run.connector_id]
+    )).rows[0];
+    if (!connector) throw new Error("CERTIFICATION_CONNECTOR_NOT_FOUND");
+    if (!connector.enabled || !["ACTIVE","DEGRADED"].includes(String(connector.status))) {
+      throw new Error("CERTIFICATION_CONNECTOR_NO_LONGER_OPERATIONAL");
+    }
+    if (String(connector.environment) === "PRODUCTION") {
+      throw new Error("CERTIFICATION_CONNECTOR_BECAME_PRODUCTION");
     }
 
     const provider = (await client.query(
@@ -168,7 +192,7 @@ export async function approveCertificationSafely(
         principal.tenantId,
         principal.userId,
         runId,
-        JSON.stringify({ certification: updated, provider })
+        JSON.stringify({ certification: updated, provider, configurationHash: currentHash })
       ]
     );
     return updated;
