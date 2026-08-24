@@ -1,5 +1,5 @@
 import { createHash,randomBytes } from "node:crypto";
 import { NextResponse,type NextRequest } from "next/server";
-import { oidcConfig } from "../../../lib/oidc.js";
+import { oidcConfig } from "../../../lib/oidc";
 const b64=(b:Buffer)=>b.toString("base64url");
 export async function GET(request:NextRequest){try{const cfg=oidcConfig();const state=b64(randomBytes(24));const verifier=b64(randomBytes(48));const challenge=createHash("sha256").update(verifier).digest("base64url");const next=request.nextUrl.searchParams.get("next")??"/";const u=new URL(cfg.authorizationUrl);u.searchParams.set("response_type","code");u.searchParams.set("client_id",cfg.clientId);u.searchParams.set("redirect_uri",cfg.redirectUri);u.searchParams.set("scope",cfg.scope);u.searchParams.set("state",state);u.searchParams.set("code_challenge",challenge);u.searchParams.set("code_challenge_method","S256");const r=NextResponse.redirect(u);const secure=process.env.NODE_ENV==="production";for(const [name,value] of [["noli_oidc_state",state],["noli_oidc_verifier",verifier],["noli_oidc_next",next]] as const)r.cookies.set(name,value,{httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:600});return r;}catch(error){const u=new URL("/login",request.url);u.searchParams.set("error",error instanceof Error?error.message:"OIDC_CONFIG_ERROR");return NextResponse.redirect(u);}}
