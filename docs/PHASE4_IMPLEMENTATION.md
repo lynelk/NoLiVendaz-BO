@@ -10,14 +10,17 @@ Phase 4 adds autonomous safe recovery, provider certification gates, unified sup
 
 Transaction recovery:
 
-- claims only `UNKNOWN` or `TIMED_OUT` transactions with an original provider transaction reference;
-- uses row locks plus a 90-second recovery lease;
+- begins with `UNKNOWN` or `TIMED_OUT` transactions that have an original provider transaction reference;
+- continues polling provider-returned nonterminal states such as `SUBMITTED` and `ACCEPTED` until terminal;
+- uses claim-one/process-one `FOR UPDATE SKIP LOCKED` work claiming;
+- assigns a unique recovery lease token to every claim;
+- sizes leases above the connector timeout and guards every completion/failure write with the same token;
 - queries the original frozen provider and connector;
 - never calls `initiateVend` during recovery;
 - never switches provider after dispatch;
 - applies bounded retry backoff;
 - records recovery audit entries and transaction events;
-- escalates to a support case when a provider reference is unavailable or repeated safe queries cannot resolve the state.
+- escalates to a support case when a provider reference is unavailable, the connector is not safely queryable or repeated safe queries do not resolve the state.
 
 Refund recovery:
 
@@ -25,10 +28,12 @@ Refund recovery:
 - requires an operational connector with `refund.status` enabled;
 - calls only the configured non-mutating refund-status endpoint;
 - never re-submits a refund during recovery;
-- recalculates the parent transaction financial state after a terminal refund result;
+- treats transport/configuration failures as ambiguous rather than as proof of refund failure;
+- rejects provider responses that return a different refund reference;
+- recalculates the parent transaction financial state after a terminal provider result;
 - escalates cases when a stable provider refund reference is unavailable or recovery repeatedly fails.
 
-The worker interval defaults to five minutes and is never allowed below one minute.
+The worker interval defaults to five minutes and is never allowed below one minute. Malformed or non-finite interval values fall back safely instead of creating a tight loop.
 
 ```text
 RECOVERY_WORKER_INTERVAL_MS=300000
@@ -61,7 +66,21 @@ Non-production connectors can be activated, disabled or placed into maintenance 
 PATCH /api/v1/connectors/:connectorId/preproduction-state
 ```
 
-The endpoint rejects `PRODUCTION` connectors. Certification owns promotion from sandbox readiness to `CERTIFIED`. Production activation remains a separate governance step and is intentionally not implemented as an automatic Phase 4 transition.
+The endpoint rejects `PRODUCTION` connectors. Certification approval requires the provider to be in `SANDBOX` (or already `CERTIFIED` for recertification). Production activation remains a separate governance step.
+
+### Capability-neutral connector runtime
+
+Connector runtime parsing no longer assumes that every connector is a vending connector.
+
+The shared parser validates the runtime structure only. Individual operations require only the endpoint they actually execute. This allows separate connectors such as:
+
+- vending-only;
+- settlement-only;
+- refund-only;
+- webhook-only;
+- mixed-capability connectors.
+
+Vending operations explicitly require `initiateVend` / `getVendStatus`; settlement synchronization requires only `settlements`; refund creation/status require only their respective endpoints. The generic HTTP adapter advertises only capabilities backed by configured endpoints.
 
 ### Provider certification
 
@@ -79,9 +98,12 @@ A certification run checks:
 8. normalization field contracts;
 9. webhook secret reference when `webhook.receive` is declared;
 10. registered provider adapter availability;
-11. a non-mutating provider health check.
+11. executable capability contracts;
+12. a non-mutating provider health check only after transport/credential/runtime preflight succeeds.
 
-Certification must run on a non-production connector. A passing run remains `PASSED` until a different authorized user approves it. Approval uses maker/checker control and moves the provider only to `CERTIFIED`. It does not enable a production connector and does not move the provider to `PRODUCTION`.
+Certification records a deterministic hash of the connector configuration and enabled capabilities. Approval recomputes the hash and rejects stale results when connector URL, credentials references, runtime mappings, status, enablement or capabilities changed after the run.
+
+A passing run remains `PASSED` until a different authorized user approves it. Approval uses maker/checker control and moves the provider only to `CERTIFIED`. It does not enable a production connector and does not move the provider to `PRODUCTION`.
 
 ```text
 POST /api/v1/connectors/:connectorId/certification-runs
@@ -102,7 +124,7 @@ POST /api/v1/certification-runs/:runId/approve
 
 NOLI-native and CPay continue using their specialized adapters.
 
-The generic adapter uses connector runtime configuration for endpoints, field mappings, status maps, authentication and webhook verification. This keeps provider-specific details out of core transaction logic.
+The generic adapter uses connector runtime configuration for endpoints, field mappings, status maps, authentication and webhook verification. Provider transaction references may be strings or finite numbers and are normalized to canonical strings.
 
 ### Unified support cases
 
@@ -115,7 +137,7 @@ GET   /api/v1/support/cases/:caseId
 PATCH /api/v1/support/cases/:caseId
 ```
 
-Case status history is stored in `support_case_events`; writes are also recorded in the audit log.
+Malformed support filters return validation errors rather than server errors. Case status history is stored in `support_case_events`; writes are also recorded in the audit log.
 
 Automated recovery creates deduplicated support cases for unresolved financial uncertainty.
 
@@ -123,7 +145,7 @@ Automated recovery creates deduplicated support cases for unresolved financial u
 
 Settlement matching is deterministic. Phase 4 does not infer a match from amount, timestamp or similar-looking records.
 
-A provider may return stable transaction references through the configured field:
+A provider may return stable transaction references through:
 
 ```text
 fields.settlementTransactionReferences
@@ -133,12 +155,13 @@ The value must be an array. Each reference is matched only when all of these hol
 
 - tenant matches;
 - provider matches;
+- connector matches the connector that supplied the settlement;
 - provider transaction reference matches exactly;
 - currency matches;
 - vend is `FULFILLED`;
 - settlement is not financially blocked.
 
-Matched records are stored in `settlement_transaction_links`. Common completed settlement statuses (`SETTLED`, `COMPLETED`, `SUCCESS`, `SUCCEEDED`, `PAID`) may advance eligible fulfilled transactions to `SETTLED`.
+If the same provider reference is ambiguous even within that connector, it is not auto-matched. Matched records are stored in `settlement_transaction_links`. Common completed settlement statuses (`SETTLED`, `COMPLETED`, `SUCCESS`, `SUCCEEDED`, `PAID`) may advance eligible fulfilled transactions to `SETTLED`.
 
 ```text
 POST /api/v1/providers/:providerId/settlements/sync
@@ -157,18 +180,9 @@ It returns current counts and financial exposure for unknown transactions and re
 
 ### Transaction 360
 
-Transaction 360 now includes:
+Transaction 360 includes recovery attempts, next recovery time, recovery lease state, latest recovery error, support cases, settlement links, refund recovery state, route decisions, refunds, reconciliation and event history. Recovery lease tokens are internal concurrency controls and are never surfaced as operator credentials or action inputs.
 
-- recovery attempts;
-- next recovery time;
-- recovery lease state;
-- latest recovery error;
-- support cases;
-- settlement links;
-- refund recovery state;
-- existing route, refund, reconciliation and event history.
-
-## Database migration
+## Database migrations
 
 Apply migrations in order:
 
@@ -177,24 +191,30 @@ Apply migrations in order:
 002_phase2_provider_runtime.sql
 003_phase3_routing_financial_control.sql
 004_phase4_recovery_certification_support.sql
+005_phase4_certification_snapshot_guard.sql
 ```
 
-Migration 004 adds recovery scheduling columns, support tables, certification tables, settlement links, RLS policies, indexes, pre-production lifecycle permissions and the `refund.status` capability.
+Migration 004 adds recovery scheduling/token columns, support tables, certification tables, settlement links, certification hashing, RLS policies, indexes, pre-production lifecycle permissions and the `refund.status` capability.
+
+Migration 005 preserves the certification configuration hash across run updates so maker/checker approval can reject stale certification results.
 
 ## Safety invariants
 
 1. Recovery performs queries, never a blind vending retry.
 2. Refund recovery performs status queries, never a second refund submission.
 3. The original provider and connector remain frozen after dispatch.
-4. Work claims use leases and row locking to reduce duplicate concurrent recovery.
+4. Recovery completion/failure requires ownership of the current lease token.
 5. Missing provider references are escalated rather than guessed.
-6. Settlement matching requires stable provider transaction references.
-7. Certification never activates production automatically.
-8. Certification approval is maker/checker controlled.
-9. Support-case linked resources and assignees remain inside the tenant boundary.
-10. Pre-production lifecycle endpoints cannot activate production connectors.
-11. Provider secrets remain references and are never returned by certification results.
+6. Nonterminal provider results remain scheduled for polling.
+7. Settlement matching requires tenant, provider, connector, currency and stable provider transaction reference alignment.
+8. Certification never activates production automatically.
+9. Certification approval is maker/checker controlled and rejects changed connector configuration.
+10. Failed HTTPS preflight prevents provider network probes and therefore prevents accidental credential transmission over rejected plaintext transport.
+11. Support-case linked resources and assignees remain inside the tenant boundary.
+12. Pre-production lifecycle endpoints cannot activate production connectors.
+13. Provider secrets remain references and are never returned by certification results.
+14. Capability-neutral runtime parsing allows dedicated settlement/refund connectors without fake vending requirements.
 
 ## Phase 5 candidate scope
 
-The next phase should focus on operator UI delivery and production operations: Command Centre exception screens, Provider Operations/certification screens, Transaction 360 actions, support workspace, observability dashboards, deployment manifests, production secret-manager integration, backup/DR verification, alert routing and end-to-end sandbox certification against configured NOLI Native and CPay endpoints.
+Phase 5 focuses on operator UI delivery and production operations: Command Centre exception screens, Provider Operations/certification screens, Transaction 360 actions, support workspace, observability dashboards, deployment manifests, production secret-manager integration, backup/DR verification, alert routing and end-to-end sandbox certification against configured NOLI Native and CPay endpoints.
