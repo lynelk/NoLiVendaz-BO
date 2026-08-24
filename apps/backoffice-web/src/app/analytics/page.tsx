@@ -1,4 +1,4 @@
-import { apiGet } from "../../lib/api.js";
+import { apiGet } from "../../lib/api";
 
 export default async function Page(){
   const d=await apiGet<Record<string,unknown>>("/api/v1/analytics/summary");
