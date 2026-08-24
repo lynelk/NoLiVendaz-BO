@@ -1,6 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { apiPatch,apiPost,apiPut } from "../lib/api.js";
+import { apiPatch,apiPost,apiPut } from "../lib/api";
 const text=(f:FormData,k:string)=>String(f.get(k)??'').trim();const optional=(f:FormData,k:string)=>{const v=text(f,k);return v||undefined};const list=(v:string)=>v.split(',').map(x=>x.trim()).filter(Boolean);
 export async function createMerchantAction(f:FormData){await apiPost('/api/v1/merchants',{code:text(f,'code').toUpperCase(),name:text(f,'name'),...(optional(f,'legalName')?{legalName:optional(f,'legalName')}:{}),...(optional(f,'country')?{country:text(f,'country').toUpperCase()}:{}),...(optional(f,'currency')?{currency:text(f,'currency').toUpperCase()}:{} )});revalidatePath('/merchants')}
 export async function createSiteAction(f:FormData){await apiPost('/api/v1/sites',{merchantId:text(f,'merchantId'),code:text(f,'code').toUpperCase(),name:text(f,'name'),...(optional(f,'address')?{address:optional(f,'address')}:{}),...(optional(f,'district')?{district:optional(f,'district')}:{}),...(optional(f,'region')?{region:optional(f,'region')}:{} )});revalidatePath('/merchants')}
