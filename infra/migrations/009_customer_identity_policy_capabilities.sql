@@ -9,7 +9,8 @@ ALTER TABLE customers
   ADD COLUMN IF NOT EXISTS identity_consent_accepted boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS service_access_policy_version varchar(80),
   ADD COLUMN IF NOT EXISTS service_access_source varchar(40),
-  ADD COLUMN IF NOT EXISTS service_access_synced_at timestamptz;
+  ADD COLUMN IF NOT EXISTS service_access_synced_at timestamptz,
+  ADD COLUMN IF NOT EXISTS identity_source_updated_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS customers_service_access_queue_idx
   ON customers(
@@ -22,6 +23,8 @@ CREATE INDEX IF NOT EXISTS customers_service_access_queue_idx
     identity_status,
     updated_at DESC
   );
+CREATE INDEX IF NOT EXISTS customers_identity_source_order_idx
+  ON customers(tenant_id,identity_source_updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS identity_provider_capabilities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -34,6 +37,7 @@ CREATE TABLE IF NOT EXISTS identity_provider_capabilities (
   supported_countries text[] NOT NULL DEFAULT ARRAY[]::text[],
   source varchar(40) NOT NULL DEFAULT 'CPAY' CHECK (source IN ('CPAY','CONFIG')),
   source_reference varchar(255),
+  source_updated_at timestamptz NOT NULL,
   last_synced_at timestamptz NOT NULL DEFAULT now(),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -42,6 +46,8 @@ CREATE TABLE IF NOT EXISTS identity_provider_capabilities (
 
 CREATE INDEX IF NOT EXISTS identity_provider_capabilities_lookup_idx
   ON identity_provider_capabilities(tenant_id,enabled,provider_code);
+CREATE INDEX IF NOT EXISTS identity_provider_capabilities_source_order_idx
+  ON identity_provider_capabilities(tenant_id,source_updated_at DESC);
 
 ALTER TABLE identity_provider_capabilities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_provider_capabilities FORCE ROW LEVEL SECURITY;
@@ -55,18 +61,17 @@ INSERT INTO permissions(code,description) VALUES
  ('customer.identity.capability.sync','Synchronize authoritative identity-provider capabilities from CPay')
 ON CONFLICT(code) DO UPDATE SET description=EXCLUDED.description;
 
+-- Human system-defined roles receive read visibility only. Identity-state and provider-capability
+-- sync permissions are deliberately not granted by default; a dedicated integration/service
+-- principal must be provisioned and explicitly assigned them.
 INSERT INTO role_permissions(role_id,permission_id)
 SELECT r.id,p.id FROM roles r CROSS JOIN permissions p
 WHERE r.system_defined=true AND p.code='customer.identity.capability.read'
 ON CONFLICT DO NOTHING;
 
-INSERT INTO role_permissions(role_id,permission_id)
-SELECT r.id,p.id FROM roles r CROSS JOIN permissions p
-WHERE r.system_defined=true
-  AND EXISTS (
-    SELECT 1 FROM role_permissions rp
-    JOIN permissions existing ON existing.id=rp.permission_id
-    WHERE rp.role_id=r.id AND existing.code='admin.audit.read'
-  )
-  AND p.code='customer.identity.capability.sync'
-ON CONFLICT DO NOTHING;
+DELETE FROM role_permissions rp
+USING roles r, permissions p
+WHERE rp.role_id=r.id
+  AND rp.permission_id=p.id
+  AND r.system_defined=true
+  AND p.code IN ('customer.identity.sync','customer.identity.capability.sync');
