@@ -56,9 +56,7 @@ export function registerProviderAdapterFactory(
 
 function assertConnectorOperational(connector: ConnectorRecord): void {
   if (!connector.enabled) throw new Error("CONNECTOR_DISABLED");
-  if (!(["ACTIVE", "DEGRADED"] as const).includes(
-    connector.status as "ACTIVE" | "DEGRADED"
-  )) {
+  if (connector.status !== "ACTIVE" && connector.status !== "DEGRADED") {
     throw new Error(`CONNECTOR_NOT_OPERATIONAL:${connector.status}`);
   }
 }
