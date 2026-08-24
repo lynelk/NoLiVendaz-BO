@@ -1,0 +1,1 @@
+"use client";export default function ErrorPage({error,reset}:{error:Error&{digest?:string};reset:()=>void}){return <div className="card error-card"><span className="eyebrow">Request failed</span><h1>Back office data could not be loaded</h1><p>{error.message}</p><button className="button" onClick={reset}>Try again</button></div>}
