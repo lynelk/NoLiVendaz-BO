@@ -4,6 +4,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 COPY . .
 RUN pnpm install --no-frozen-lockfile \
+  && pnpm security:gate \
   && pnpm --filter @nolivendaz/backoffice-web build \
   && chown -R node:node /app
 
