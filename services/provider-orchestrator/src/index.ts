@@ -19,6 +19,7 @@ import {
   interpolatePath,
   normalizeRefundStatus,
   parseRuntimeConfiguration,
+  requireEndpoint,
   requestJson
 } from "@nolivendaz/provider-sdk";
 
@@ -96,7 +97,7 @@ function classify(error: unknown) {
     ? Number((error as { httpStatus?: unknown }).httpStatus)
     : undefined;
 
-  if (status && status >= 400 && status < 500 && ![408,409,425,429].includes(status)) {
+  if (status && status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status)) {
     return { outcome: "FAILED" as const, error: message, httpStatus: status };
   }
   return {
@@ -149,16 +150,17 @@ export async function executeRefundSafely(
   try {
     assertConnectorOperational(connector);
     const runtime = parseRuntimeConfiguration(connector);
-    if (!runtime.endpoints.initiateRefund) {
-      return { outcome: "FAILED", error: "PROVIDER_REFUND_NOT_CONFIGURED" };
-    }
-
+    const endpoint = requireEndpoint(
+      runtime,
+      "initiateRefund",
+      "PROVIDER_REFUND_NOT_CONFIGURED"
+    );
     const response = await requestJson(
       connector,
       secrets,
       runtime,
       "POST",
-      runtime.endpoints.initiateRefund,
+      endpoint,
       request
     );
     const fields = runtime.fields ?? {};
@@ -191,15 +193,17 @@ export async function queryRefundStatusSafely(
   try {
     assertConnectorOperational(connector);
     const runtime = parseRuntimeConfiguration(connector);
-    if (!runtime.endpoints.getRefundStatus) {
-      return { outcome: "FAILED", error: "PROVIDER_REFUND_STATUS_NOT_CONFIGURED" };
-    }
+    const endpoint = requireEndpoint(
+      runtime,
+      "getRefundStatus",
+      "PROVIDER_REFUND_STATUS_NOT_CONFIGURED"
+    );
     const response = await requestJson(
       connector,
       secrets,
       runtime,
       "GET",
-      interpolatePath(runtime.endpoints.getRefundStatus, { reference: providerRefundId })
+      interpolatePath(endpoint, { reference: providerRefundId })
     );
     const fields = runtime.fields ?? {};
     const returnedId = getByPath(response.body, fields.providerRefundId);
@@ -229,11 +233,13 @@ export async function fetchProviderSettlements(
 ): Promise<ProviderSettlement[]> {
   assertConnectorOperational(connector);
   const runtime = parseRuntimeConfiguration(connector);
-  if (!runtime.endpoints.settlements) {
-    throw new Error("PROVIDER_SETTLEMENTS_NOT_CONFIGURED");
-  }
+  const settlementEndpoint = requireEndpoint(
+    runtime,
+    "settlements",
+    "PROVIDER_SETTLEMENTS_NOT_CONFIGURED"
+  );
 
-  const endpoint = interpolatePath(runtime.endpoints.settlements, { from, to });
+  const endpoint = interpolatePath(settlementEndpoint, { from, to });
   const response = await requestJson(connector, secrets, runtime, "GET", endpoint);
   const fields = runtime.fields ?? {};
   const candidate = fields.settlementsArray
@@ -273,7 +279,9 @@ export async function fetchProviderSettlements(
       }
       transactionReferences = [...new Set(
         referencesRaw
-          .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+          .filter((value): value is string | number =>
+            typeof value === "string" || typeof value === "number"
+          )
           .map((value) => String(value).trim())
           .filter(Boolean)
       )];
