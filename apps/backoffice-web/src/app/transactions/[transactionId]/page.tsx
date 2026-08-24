@@ -1,0 +1,89 @@
+import { notFound } from "next/navigation";
+import { apiGet, BackOfficeApiError } from "../../../lib/api.js";
+import { dateTime, money, text } from "../../../lib/format.js";
+import type { ConnectorCapabilities, OperatorContext, Transaction360 } from "../../../lib/types.js";
+import { StatusPill } from "../../../components/status-pill.js";
+import { queryOriginalProvider } from "../actions.js";
+
+export default async function Transaction360Page({
+  params
+}: {
+  params: Promise<{ transactionId: string }>;
+}) {
+  const { transactionId } = await params;
+  let transaction: Transaction360;
+  try {
+    transaction = await apiGet<Transaction360>(`/api/v1/transactions/${transactionId}`);
+  } catch (error) {
+    if (error instanceof BackOfficeApiError && error.status === 404) notFound();
+    throw error;
+  }
+
+  const operator = await apiGet<OperatorContext>("/api/v1/auth/context").catch(() => null);
+  const connector = transaction.connectorId
+    ? await apiGet<ConnectorCapabilities>(`/api/v1/connectors/${transaction.connectorId}/capabilities`).catch(() => null)
+    : null;
+  const recoverable = ["UNKNOWN","TIMED_OUT","CREATED","SUBMITTED","ACCEPTED"].includes(transaction.status);
+  const canQuery = Boolean(
+    recoverable &&
+    operator?.permissions.includes("transaction.query_provider") &&
+    connector?.capabilities.includes("transaction.query")
+  );
+
+  const details = [
+    ["Reference", transaction.reference],
+    ["Correlation ID", transaction.correlationId],
+    ["Merchant", transaction.merchantName],
+    ["Provider", transaction.providerName],
+    ["Connector", transaction.connectorName],
+    ["Provider reference", transaction.providerTransactionId],
+    ["Payment reference", transaction.paymentReference],
+    ["CPay reference", transaction.cpayTransactionId],
+    ["Amount", money(transaction.totalAmount, transaction.currency)],
+    ["Financial hold", transaction.financialHoldReason]
+  ];
+
+  return (
+    <>
+      <header className="page-head">
+        <div><span className="eyebrow">Transaction 360</span><h1>{transaction.reference}</h1><p>Canonical lifecycle, provider evidence, financial exposure and operator history in one view.</p></div>
+        {canQuery ? (
+          <form action={queryOriginalProvider}>
+            <input type="hidden" name="transactionId" value={transaction.id}/>
+            <button className="button" type="submit">Query original provider</button>
+          </form>
+        ) : null}
+      </header>
+
+      {transaction.financialHoldReason ? <div className="alert">Financial hold: {transaction.financialHoldReason}. Settlement remains blocked until the state is safe.</div> : null}
+
+      <section className="grid detail-grid">
+        <article className="card detail"><span>Payment</span><StatusPill value={transaction.paymentStatus}/></article>
+        <article className="card detail"><span>Vending</span><StatusPill value={transaction.vendStatus}/></article>
+        <article className="card detail"><span>Settlement</span><StatusPill value={transaction.settlementStatus}/></article>
+      </section>
+
+      <section className="grid two-col">
+        <div className="stack">
+          <article className="card">
+            <div className="section-title"><h2>Transaction details</h2><StatusPill value={transaction.status}/></div>
+            <div className="grid detail-grid">{details.map(([label,value]) => <div className="detail" key={label}><span>{label}</span><strong>{text(value)}</strong></div>)}</div>
+          </article>
+          <article className="card">
+            <div className="section-title"><h2>Timeline</h2><span className="eyebrow">{transaction.timeline?.length ?? 0} events</span></div>
+            <div className="timeline">{(transaction.timeline ?? []).slice().reverse().map((event,index) => (
+              <div className="timeline-item" key={String(event.id ?? index)}>
+                <strong>{text(event.eventType,"Event")}</strong> · {text(event.normalizedStatus)} · {dateTime(event.occurredAt)}
+              </div>
+            ))}</div>
+          </article>
+        </div>
+        <div className="stack">
+          <article className="card"><div className="section-title"><h2>Recovery</h2></div><div className="detail"><span>Attempts</span><strong>{transaction.recoveryAttempts ?? 0}</strong><span>Next recovery</span><strong>{dateTime(transaction.nextRecoveryAt)}</strong><span>Last error</span><strong>{text(transaction.recoveryLastError)}</strong></div></article>
+          <article className="card"><div className="section-title"><h2>Support & reconciliation</h2></div><div className="detail"><span>Support cases</span><strong>{transaction.supportCases?.length ?? 0}</strong><span>Reconciliation exceptions</span><strong>{transaction.reconciliationExceptions?.length ?? 0}</strong><span>Settlement links</span><strong>{transaction.settlementLinks?.length ?? 0}</strong></div></article>
+          <article className="card"><div className="section-title"><h2>Available connector capabilities</h2></div><div className="chips">{connector?.capabilities.length ? connector.capabilities.map((cap) => <span className="chip" key={cap}>{cap}</span>) : <span className="eyebrow">No capability data</span>}</div></article>
+        </div>
+      </section>
+    </>
+  );
+}
