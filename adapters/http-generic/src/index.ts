@@ -1,4 +1,7 @@
-import type { ConnectorRecord, TransactionStatus } from "@nolivendaz/canonical-models";
+import type {
+  ConnectorRecord,
+  TransactionStatus
+} from "@nolivendaz/canonical-models";
 import {
   type NormalizedProviderEvent,
   type ProviderHealthResult,
@@ -17,17 +20,29 @@ import {
   verifyHmacWebhook
 } from "@nolivendaz/provider-sdk";
 
-const txStatus = (status: VendResponse["status"]): TransactionStatus =>
-  status === "FULFILLED" ? "FULFILLED" :
-  status === "FAILED" ? "FAILED" :
-  status === "UNKNOWN" ? "UNKNOWN" :
-  status === "CANCELLED" ? "CANCELLED" :
-  status === "ACCEPTED" ? "ACCEPTED" : "SUBMITTED";
+function transactionStatus(status: VendResponse["status"]): TransactionStatus {
+  if (status === "FULFILLED") return "FULFILLED";
+  if (status === "FAILED") return "FAILED";
+  if (status === "UNKNOWN") return "UNKNOWN";
+  if (status === "CANCELLED") return "CANCELLED";
+  if (status === "ACCEPTED") return "ACCEPTED";
+  return "SUBMITTED";
+}
 
-export class NativeVendingAdapter implements VendingProviderAdapter {
+function normalizeReference(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  if (typeof value === "number" && !Number.isFinite(value)) return undefined;
+  const text = String(value).trim();
+  return text || undefined;
+}
+
+export class GenericHttpVendingAdapter implements VendingProviderAdapter {
   readonly connector: ConnectorRecord;
 
-  constructor(connector: ConnectorRecord, private readonly secrets: SecretResolver) {
+  constructor(
+    connector: ConnectorRecord,
+    private readonly secrets: SecretResolver
+  ) {
     this.connector = connector;
   }
 
@@ -42,6 +57,9 @@ export class NativeVendingAdapter implements VendingProviderAdapter {
     if (this.connector.webhookSecretReference) capabilities.push({ code: "webhook.receive" });
     if (runtime.endpoints.initiateRefund) capabilities.push({ code: "refund.create" });
     if (runtime.endpoints.getRefundStatus) capabilities.push({ code: "refund.status" });
+    if (runtime.endpoints.resendToken) capabilities.push({ code: "token.resend" });
+    if (runtime.endpoints.devices) capabilities.push({ code: "device.list" });
+    if (runtime.endpoints.deviceStatus) capabilities.push({ code: "device.status" });
     if (runtime.endpoints.settlements) capabilities.push({ code: "settlement.list" });
     return capabilities;
   }
@@ -49,11 +67,25 @@ export class NativeVendingAdapter implements VendingProviderAdapter {
   async healthCheck(): Promise<ProviderHealthResult> {
     const runtime = parseRuntimeConfiguration(this.connector);
     if (!runtime.endpoints.health) {
-      return { status: "UNKNOWN", checkedAt: new Date().toISOString(), details: { reason: "HEALTH_ENDPOINT_NOT_CONFIGURED" } };
+      return {
+        status: "UNKNOWN",
+        checkedAt: new Date().toISOString(),
+        details: { reason: "HEALTH_ENDPOINT_NOT_CONFIGURED" }
+      };
     }
     try {
-      const result = await requestJson(this.connector, this.secrets, runtime, "GET", runtime.endpoints.health);
-      return { status: "HEALTHY", latencyMs: result.latencyMs, checkedAt: new Date().toISOString() };
+      const result = await requestJson(
+        this.connector,
+        this.secrets,
+        runtime,
+        "GET",
+        runtime.endpoints.health
+      );
+      return {
+        status: "HEALTHY",
+        latencyMs: result.latencyMs,
+        checkedAt: new Date().toISOString()
+      };
     } catch (error) {
       return {
         status: "OUTAGE",
@@ -66,8 +98,15 @@ export class NativeVendingAdapter implements VendingProviderAdapter {
   async initiateVend(request: VendRequest): Promise<VendResponse> {
     const runtime = parseRuntimeConfiguration(this.connector);
     const { initiateVend } = requireVendingEndpoints(runtime);
-    const result = await requestJson(this.connector, this.secrets, runtime, "POST", initiateVend, request);
-    return this.toVend(result.body);
+    const result = await requestJson(
+      this.connector,
+      this.secrets,
+      runtime,
+      "POST",
+      initiateVend,
+      request
+    );
+    return this.toVendResponse(result.body);
   }
 
   async getVendStatus(reference: string): Promise<VendResponse> {
@@ -80,7 +119,7 @@ export class NativeVendingAdapter implements VendingProviderAdapter {
       "GET",
       interpolatePath(getVendStatus, { reference })
     );
-    return this.toVend(result.body, reference);
+    return this.toVendResponse(result.body, reference);
   }
 
   async getTransaction(reference: string): Promise<ProviderTransaction> {
@@ -94,16 +133,19 @@ export class NativeVendingAdapter implements VendingProviderAdapter {
       "GET",
       interpolatePath(endpoint, { reference })
     );
-    const vend = this.toVend(result.body, reference);
+    const vend = this.toVendResponse(result.body, reference);
     return {
       providerTransactionId: vend.providerTransactionId,
-      transactionStatus: txStatus(vend.status),
+      transactionStatus: transactionStatus(vend.status),
       vendStatus: vend.status,
       ...(vend.providerStatus ? { providerStatus: vend.providerStatus } : {})
     };
   }
 
-  async verifyWebhook(headers: Record<string, string | string[] | undefined>, rawBody: string) {
+  async verifyWebhook(
+    headers: Record<string, string | string[] | undefined>,
+    rawBody: string
+  ): Promise<boolean> {
     return verifyHmacWebhook(this.connector, this.secrets, headers, rawBody);
   }
 
@@ -113,43 +155,53 @@ export class NativeVendingAdapter implements VendingProviderAdapter {
     const objectPayload = payload && typeof payload === "object"
       ? payload as Record<string, unknown>
       : { value: payload };
-    const id = getByPath(payload, fields.eventId);
-    const type = getByPath(payload, fields.eventType);
-    const occurred = getByPath(payload, fields.occurredAt);
-    const correlation = getByPath(payload, fields.correlationId);
-    const providerTx = getByPath(payload, fields.eventProviderTransactionId ?? fields.providerTransactionId);
-    const providerStatus = getByPath(payload, fields.providerStatus);
-    const rawVend = getByPath(payload, fields.vendStatus ?? fields.providerStatus);
-    const eventType = typeof type === "string" ? type : "provider.event";
-    const mapped = runtime.eventStatusMap?.[eventType];
-    const vendStatus = mapped ?? (
-      typeof rawVend === "string" ? normalizeVendStatus(rawVend, runtime.statusMap) : undefined
+
+    const eventTypeValue = getByPath(payload, fields.eventType);
+    const eventType = typeof eventTypeValue === "string" ? eventTypeValue : "provider.event";
+    const rawStatus = getByPath(payload, fields.vendStatus ?? fields.providerStatus);
+    const configured = runtime.eventStatusMap?.[eventType];
+    const vendStatus = configured ?? (
+      typeof rawStatus === "string"
+        ? normalizeVendStatus(rawStatus, runtime.statusMap)
+        : undefined
     );
+    const id = normalizeReference(getByPath(payload, fields.eventId));
+    const occurredAt = getByPath(payload, fields.occurredAt);
+    const correlationId = normalizeReference(getByPath(payload, fields.correlationId));
+    const providerTransactionId = normalizeReference(getByPath(
+      payload,
+      fields.eventProviderTransactionId ?? fields.providerTransactionId
+    ));
+    const providerStatus = getByPath(payload, fields.providerStatus);
+
     return [{
-      id: typeof id === "string" ? id : `native-${Date.now()}`,
+      id: id ?? `generic-${Date.now()}`,
       type: eventType,
-      occurredAt: typeof occurred === "string" ? occurred : new Date().toISOString(),
-      ...(typeof correlation === "string" ? { correlationId: correlation } : {}),
-      ...(typeof providerTx === "string" ? { providerTransactionId: providerTx } : {}),
+      occurredAt: typeof occurredAt === "string" ? occurredAt : new Date().toISOString(),
+      ...(correlationId ? { correlationId } : {}),
+      ...(providerTransactionId ? { providerTransactionId } : {}),
       ...(vendStatus ? { vendStatus } : {}),
       ...(typeof providerStatus === "string" ? { providerStatus } : {}),
       payload: objectPayload
     }];
   }
 
-  private toVend(body: unknown, fallback?: string): VendResponse {
+  private toVendResponse(body: unknown, fallbackReference?: string): VendResponse {
     const runtime = parseRuntimeConfiguration(this.connector);
     const fields = runtime.fields ?? {};
-    const providerId = getByPath(body, fields.providerTransactionId);
-    const raw = getByPath(body, fields.vendStatus ?? fields.providerStatus);
+    const providerTransactionId = normalizeReference(getByPath(body, fields.providerTransactionId));
+    const rawStatus = getByPath(body, fields.vendStatus ?? fields.providerStatus);
     const providerStatus = getByPath(body, fields.providerStatus);
     const fulfilment = getByPath(body, fields.fulfilment);
-    if (typeof providerId !== "string" && !fallback) {
+    const resolvedReference = providerTransactionId ?? fallbackReference;
+
+    if (!resolvedReference) {
       throw new Error("PROVIDER_TRANSACTION_REFERENCE_MISSING");
     }
+
     return {
-      providerTransactionId: typeof providerId === "string" ? providerId : fallback!,
-      status: normalizeVendStatus(raw, runtime.statusMap),
+      providerTransactionId: resolvedReference,
+      status: normalizeVendStatus(rawStatus, runtime.statusMap),
       ...(typeof providerStatus === "string" ? { providerStatus } : {}),
       ...(fulfilment && typeof fulfilment === "object"
         ? { fulfilment: fulfilment as Record<string, unknown> }

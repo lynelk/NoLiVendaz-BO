@@ -1,9 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { EnvironmentSecretResolver,normalizeRefundStatus,normalizeVendStatus,verifyHmacWebhook } from "../dist/index.js";
+import {
+  EnvironmentSecretResolver,
+  normalizeRefundStatus,
+  normalizeVendStatus,
+  parseRuntimeConfiguration,
+  requireVendingEndpoints,
+  verifyHmacWebhook
+} from "../dist/index.js";
+
 const connector={id:"11111111-1111-4111-8111-111111111111",providerId:"22222222-2222-4222-8222-222222222222",name:"test",environment:"SANDBOX",apiVersion:null,baseUrl:"https://provider.example",authType:"NONE",credentialReference:null,webhookSecretReference:"env://TEST_WEBHOOK_SECRET",timeoutMs:5000,retryPolicy:{},runtimeConfiguration:{endpoints:{initiateVend:"/vend",getVendStatus:"/vend/{reference}"},webhook:{signatureHeader:"x-signature",timestampHeader:"x-timestamp",maxAgeSeconds:300}},healthCheckPath:null,status:"ACTIVE",enabled:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+
 test("normalizes configured provider status",()=>assert.equal(normalizeVendStatus("00",{"00":"FULFILLED"}),"FULFILLED"));
 test("normalizes refund status without inventing completion",()=>{assert.equal(normalizeRefundStatus("SUCCESS"),"COMPLETED");assert.equal(normalizeRefundStatus("REJECTED"),"FAILED");assert.equal(normalizeRefundStatus("PROCESSING"),"PENDING");assert.equal(normalizeRefundStatus("X1",{"X1":"COMPLETED"}),"COMPLETED");});
+
+test("parses a settlement-only connector without vending endpoints",()=>{
+  const settlementOnly={...connector,runtimeConfiguration:{endpoints:{settlements:"/settlements?from={from}&to={to}"},fields:{settlementId:"id",settlementCurrency:"currency",settlementGrossAmount:"gross",settlementStatus:"status",settlementPeriodStart:"from",settlementPeriodEnd:"to"}}};
+  const runtime=parseRuntimeConfiguration(settlementOnly);
+  assert.equal(runtime.endpoints.settlements,"/settlements?from={from}&to={to}");
+  assert.throws(()=>requireVendingEndpoints(runtime),/CONNECTOR_VEND_INITIATE_ENDPOINT_REQUIRED/);
+});
+
 test("accepts valid timestamped HMAC and rejects missing timestamp",async()=>{process.env.TEST_WEBHOOK_SECRET="test-secret";const raw='{"event":"vend.completed"}';const timestamp=String(Math.floor(Date.now()/1000));const signature=createHmac("sha256","test-secret").update(`${timestamp}.${raw}`).digest("hex");const resolver=new EnvironmentSecretResolver();assert.equal(await verifyHmacWebhook(connector,resolver,{"x-signature":signature,"x-timestamp":timestamp},raw),true);assert.equal(await verifyHmacWebhook(connector,resolver,{"x-signature":signature},raw),false);});
 test("rejects stale webhook timestamp",async()=>{process.env.TEST_WEBHOOK_SECRET="test-secret";const raw='{"event":"old"}';const timestamp=String(Math.floor(Date.now()/1000)-1000);const signature=createHmac("sha256","test-secret").update(`${timestamp}.${raw}`).digest("hex");assert.equal(await verifyHmacWebhook(connector,new EnvironmentSecretResolver(),{"x-signature":signature,"x-timestamp":timestamp},raw),false);});

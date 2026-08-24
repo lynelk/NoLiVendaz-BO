@@ -24,6 +24,10 @@ import {
   getApprovedRefundRuntime,
   upsertSettlementsTenantSafe
 } from "../repositories/phase3-safety-repository.js";
+import {
+  listSettlementMatches,
+  matchSettlementReferences
+} from "../repositories/settlement-matching-repository.js";
 
 const secrets = new EnvironmentSecretResolver();
 const environmentResult = ConnectorEnvironmentSchema.safeParse(
@@ -224,11 +228,18 @@ export async function registerFinancialRoutes(app: FastifyInstance): Promise<voi
           runtime.connector.id,
           settlements
         );
+        const matching = await matchSettlementReferences(
+          request.principal!,
+          runtime.providerId,
+          runtime.connector.id,
+          settlements
+        );
         return {
           data: {
             synced: count,
             providerId: runtime.providerId,
-            connectorId: runtime.connector.id
+            connectorId: runtime.connector.id,
+            matching
           }
         };
       } catch (error) {
@@ -244,5 +255,16 @@ export async function registerFinancialRoutes(app: FastifyInstance): Promise<voi
     "/api/v1/settlements",
     { preHandler: [app.authenticate, requirePermission("settlement.read")] },
     async (request) => ({ data: await listSettlements(request.principal!, 100) })
+  );
+
+  app.get(
+    "/api/v1/settlements/:settlementId/matches",
+    { preHandler: [app.authenticate, requirePermission("settlement.read")] },
+    async (request) => ({
+      data: await listSettlementMatches(
+        request.principal!,
+        (request.params as { settlementId: string }).settlementId
+      )
+    })
   );
 }
