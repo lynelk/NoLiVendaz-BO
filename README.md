@@ -8,7 +8,7 @@ The application provides one secure operational workspace across NOLI Native Ven
 
 ## Application status
 
-The repository now contains the complete back-office application baseline: operator web UI, API, provider adapters and orchestrator, webhook processing, automated recovery, operations monitoring, provider certification, financial reconciliation, administration, authentication, observability and deployment/DR tooling.
+The repository now contains the complete back-office application baseline: operator web UI, API, provider adapters and orchestrator, webhook processing, automated recovery, operations monitoring, provider certification, financial reconciliation, customer identity assurance, administration, authentication, observability and deployment/DR tooling.
 
 Production readiness still depends on environment-specific configuration: real OIDC credentials, production secret-manager values, deployed NOLI Native and CPay/ChargeNow endpoint mappings, provider sandbox certification, database/object-storage provisioning and successful deployment checks. Those values are intentionally not embedded in source.
 
@@ -27,7 +27,9 @@ Supporting packages and services include the provider orchestrator, reconciliati
 
 ## Operator modules
 
-The web application includes Command Centre, Transactions and Transaction 360, Providers and certification, Merchants & Sites, Services & Products, Routing, Devices, Payments & Settlements, Reconciliation, Support, Integration Health, Alerts & Incidents, Analytics and Administration.
+The web application includes Command Centre, Transactions and Transaction 360, Customers & Identity, Providers and certification, Merchants & Sites, Services & Products, Routing, Devices, Payments & Settlements, Reconciliation, Support, Integration Health, Alerts & Incidents, Analytics and Administration.
+
+Customers & Identity provides a verification queue and customer assurance detail workspace. Identity numbers are displayed only in masked form, phone/email are masked in the operator UI, and service readiness is derived from synchronized NOLI/CPay verification state rather than an operator override.
 
 Provider actions are capability-aware and permission-aware. Financial actions remain enforced by backend state machines, idempotency, maker/checker controls and audit logging.
 
@@ -67,6 +69,7 @@ Follow `docs/PRODUCTION_RUNBOOK.md`. A deployment is not production-ready until 
 - External requests carry correlation IDs and idempotency keys.
 - Webhooks are verified, replay-protected, deduplicated, persisted and normalized before domain handling.
 - Secrets never enter source control or ordinary business tables.
+- Raw customer identification numbers are not exposed by the operator UI; operational review uses masked identity values and provider references.
 - High-risk configuration and financial actions require RBAC, approval and immutable audit evidence.
 - Tenant isolation is enforced in application logic and PostgreSQL RLS.
 - Settlement matching uses explicit provider references, not amount/time guesses.
