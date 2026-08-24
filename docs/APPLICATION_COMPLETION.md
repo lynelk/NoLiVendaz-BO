@@ -2,7 +2,7 @@
 
 ## Completion statement
 
-The repository contains the complete production-baseline application for NOLI Vendaz Back Office: a federated multi-provider vending operations and orchestration control plane with operator UI, API, provider adapters, routing, transaction control, financial governance, recovery, support, reconciliation, analytics, administration, observability and deployment/DR tooling.
+The repository contains the complete production-baseline application for NOLI Vendaz Back Office: a federated multi-provider vending operations and orchestration control plane with operator UI, API, provider adapters, routing, transaction control, financial governance, customer identity assurance, recovery, support, reconciliation, analytics, administration, observability and deployment/DR tooling.
 
 This document distinguishes application completion from environment activation. Source code can be complete while production still requires real infrastructure, credentials and provider certification.
 
@@ -15,6 +15,8 @@ This document distinguishes application completion from environment activation. 
 - Canonical transaction lifecycle with separate payment, vending, refund and settlement state.
 - NOLI Native, CPay/ChargeNow and configurable generic HTTP provider adapters.
 - Signed/replay-protected webhook ingestion and canonical event normalization.
+- Customer assurance synchronization from NOLI/CPay with phone verification, generic identity type/country, masked identity value, authoritative provider reference, consent evidence and protected-service readiness.
+- RBAC-separated customer and identity read/sync permissions.
 
 ### Reliability and financial control
 - Correlation IDs and idempotency.
@@ -36,6 +38,7 @@ This document distinguishes application completion from environment activation. 
 ### Operator console
 - Command Centre.
 - Transactions and Transaction 360.
+- Customers & Identity verification queue with readiness filters and masked customer assurance detail.
 - Providers and Provider Operations.
 - Merchants & Sites.
 - Services & Products.
@@ -79,6 +82,8 @@ The application must continue to satisfy these invariants:
 8. Tenant-owned data is protected by application authorization and PostgreSQL RLS.
 9. Raw secrets are not persisted in normal business tables or committed to source.
 10. Privileged financial/configuration changes leave audit evidence.
+11. The operator interface never displays a raw identification number and masks direct customer contact values in the assurance workspace.
+12. Protected-service readiness is derived from synchronized verification state; an operator UI action cannot manufacture an authoritative VERIFIED identity result.
 
 ## Environment activation checklist
 
@@ -90,6 +95,7 @@ Before production launch:
 - Configure an approved OIDC provider and verify login/logout/session expiry.
 - Store `JWT_SECRET`, `AUTH_EXCHANGE_SECRET`, provider credentials and webhook secrets in the hosting secret store.
 - Configure real NOLI Native and CPay/ChargeNow endpoint/field mappings.
+- Verify NOLI/CPay customer-assurance synchronization, masked identity handling and role-based access to customer identity views.
 - Run provider sandbox certification and obtain required maker/checker approvals.
 - Verify webhook signatures, replay protection and delayed callback handling.
 - Verify UNKNOWN transaction recovery does not re-vend.
@@ -103,6 +109,8 @@ Before production launch:
 ## Known configuration dependencies
 
 The repository does not contain real provider credentials, production OIDC credentials, production database URLs, private backup keys or fabricated provider endpoint paths. NOLI Native and CPay/ChargeNow production mappings must be configured from the deployed provider contracts.
+
+Customer assurance also depends on synchronized NOLI/CPay verification evidence. Format validation alone must never be treated as authoritative identity verification.
 
 These are deliberate configuration dependencies, not missing application modules.
 
