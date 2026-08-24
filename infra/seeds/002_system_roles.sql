@@ -1,3 +1,6 @@
+BEGIN;
+SELECT set_config('app.is_platform_admin','true',true);
+
 INSERT INTO roles(tenant_id,code,name,description,system_defined) VALUES
  (NULL,'PLATFORM_SUPER_ADMIN','Platform Super Admin','Full platform control across tenants',true),
  (NULL,'OPERATIONS_ADMIN','Operations Admin','Operations, provider health, routing, support and recovery',true),
@@ -32,3 +35,5 @@ INSERT INTO role_permissions(role_id,permission_id) SELECT role_id,permission_id
 INSERT INTO role_permissions(role_id,permission_id)
 SELECT r.id,p.id FROM roles r CROSS JOIN permissions p WHERE r.tenant_id IS NULL AND r.code='PLATFORM_SUPER_ADMIN'
 ON CONFLICT DO NOTHING;
+
+COMMIT;
