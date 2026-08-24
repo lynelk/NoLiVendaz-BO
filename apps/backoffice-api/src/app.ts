@@ -10,6 +10,10 @@ import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { registerVendingRoutes } from "./routes/vending.js";
 import { registerFinancialRoutes } from "./routes/financial.js";
 import { registerReconciliationRoutes } from "./routes/reconciliation.js";
+import { registerSupportRoutes } from "./routes/support.js";
+import { registerCertificationRoutes } from "./routes/certification.js";
+import { registerOperationsRoutes } from "./routes/operations.js";
+import { registerRecoveryRoutes } from "./routes/recovery.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" }, requestIdHeader: "x-correlation-id" });
@@ -27,5 +31,9 @@ export async function buildApp() {
   await registerVendingRoutes(app);
   await registerFinancialRoutes(app);
   await registerReconciliationRoutes(app);
+  await registerSupportRoutes(app);
+  await registerCertificationRoutes(app);
+  await registerOperationsRoutes(app);
+  await registerRecoveryRoutes(app);
   return app;
 }
