@@ -20,6 +20,7 @@ export interface SettlementMatchResult {
   settlementsProcessed: number;
   transactionLinksCreated: number;
   unmatchedReferences: string[];
+  ambiguousReferences: string[];
 }
 
 export async function matchSettlementReferences(
@@ -31,6 +32,7 @@ export async function matchSettlementReferences(
   return withTenantContext(context(principal), async (client) => {
     let transactionLinksCreated = 0;
     const unmatchedReferences: string[] = [];
+    const ambiguousReferences: string[] = [];
 
     for (const settlement of settlements) {
       if (!settlement.transactionReferences?.length) continue;
@@ -49,23 +51,28 @@ export async function matchSettlementReferences(
       );
 
       for (const reference of settlement.transactionReferences) {
-        const transaction = (await client.query(
+        const matches = (await client.query(
           `SELECT id,total_amount::text AS "totalAmount"
              FROM transactions
             WHERE tenant_id=$1
               AND provider_id=$2
-              AND provider_transaction_id=$3
-              AND currency=$4
+              AND connector_id=$3
+              AND provider_transaction_id=$4
+              AND currency=$5
               AND vend_status='FULFILLED'
-              AND settlement_blocked=false
-            LIMIT 1`,
-          [principal.tenantId, providerId, reference, settlement.currency]
-        )).rows[0];
+              AND settlement_blocked=false`,
+          [principal.tenantId, providerId, connectorId, reference, settlement.currency]
+        )).rows;
 
-        if (!transaction) {
+        if (matches.length === 0) {
           unmatchedReferences.push(reference);
           continue;
         }
+        if (matches.length > 1) {
+          ambiguousReferences.push(reference);
+          continue;
+        }
+        const transaction = matches[0]!;
 
         const linked = await client.query(
           `INSERT INTO settlement_transaction_links(
@@ -111,7 +118,8 @@ export async function matchSettlementReferences(
           connectorId,
           settlementsProcessed: settlements.length,
           transactionLinksCreated,
-          unmatchedReferences
+          unmatchedReferences,
+          ambiguousReferences
         })
       ]
     );
@@ -119,7 +127,8 @@ export async function matchSettlementReferences(
     return {
       settlementsProcessed: settlements.length,
       transactionLinksCreated,
-      unmatchedReferences
+      unmatchedReferences,
+      ambiguousReferences
     };
   });
 }
