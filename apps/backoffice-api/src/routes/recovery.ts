@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { runTenantRecoveryCycle } from "@nolivendaz/recovery-worker";
+import { runRecoveryEscalations } from "@nolivendaz/recovery-worker/escalation";
 import { requirePermission } from "../auth.js";
 
 export async function registerRecoveryRoutes(app: FastifyInstance): Promise<void> {
@@ -18,12 +19,14 @@ export async function registerRecoveryRoutes(app: FastifyInstance): Promise<void
         });
       }
       try {
-        return {
-          data: await runTenantRecoveryCycle(
-            request.principal!.tenantId,
-            parsed.data.limit
-          )
-        };
+        const result = await runTenantRecoveryCycle(
+          request.principal!.tenantId,
+          parsed.data.limit
+        );
+        result.casesEscalated += await runRecoveryEscalations(
+          request.principal!.tenantId
+        );
+        return { data: result };
       } catch (error) {
         request.log.error({ err: error }, "Recovery cycle failed");
         return reply.code(409).send({
