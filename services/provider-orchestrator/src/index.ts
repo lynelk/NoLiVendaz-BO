@@ -1,21 +1,261 @@
 import { CPayAdapter } from "@nolivendaz/adapter-cpay";
 import { NativeVendingAdapter } from "@nolivendaz/adapter-native-vending";
-import type { ConnectorRecord,ProviderType,TransactionStatus,VendStatus } from "@nolivendaz/canonical-models";
-import { type ProviderSettlement,type RefundRequest,type RefundResponse,type SecretResolver,type VendRequest,type VendResponse,type VendingProviderAdapter,getByPath,interpolatePath,normalizeRefundStatus,parseRuntimeConfiguration,requestJson } from "@nolivendaz/provider-sdk";
+import type {
+  ConnectorRecord,
+  ProviderType,
+  TransactionStatus,
+  VendStatus
+} from "@nolivendaz/canonical-models";
+import {
+  type ProviderSettlement,
+  type RefundRequest,
+  type RefundResponse,
+  type SecretResolver,
+  type VendRequest,
+  type VendResponse,
+  type VendingProviderAdapter,
+  getByPath,
+  interpolatePath,
+  normalizeRefundStatus,
+  parseRuntimeConfiguration,
+  requestJson
+} from "@nolivendaz/provider-sdk";
 
-export interface UnknownTransactionRecord{id:string;providerType:ProviderType;connector:ConnectorRecord;providerTransactionId:string|null;status:TransactionStatus}
-export interface UnknownResolution{status:TransactionStatus;vendStatus:VendStatus;providerStatus?:string;providerTransactionId:string;queriedAt:string}
-export type AdapterFactory=(connector:ConnectorRecord,secrets:SecretResolver)=>VendingProviderAdapter;
-const factories=new Map<ProviderType,AdapterFactory>([["NATIVE",(c,s)=>new NativeVendingAdapter(c,s)],["CPAY",(c,s)=>new CPayAdapter(c,s)]]);
-export function registerProviderAdapterFactory(providerType:ProviderType,factory:AdapterFactory){factories.set(providerType,factory);}
-export function createProviderAdapter(providerType:ProviderType,connector:ConnectorRecord,secrets:SecretResolver){const f=factories.get(providerType);if(!f)throw new Error(`PROVIDER_ADAPTER_NOT_REGISTERED:${providerType}`);if(!connector.enabled)throw new Error("CONNECTOR_DISABLED");return f(connector,secrets);}
+export interface UnknownTransactionRecord {
+  id: string;
+  providerType: ProviderType;
+  connector: ConnectorRecord;
+  providerTransactionId: string | null;
+  status: TransactionStatus;
+}
 
-export type VendExecutionResult={outcome:"CONFIRMED";response:VendResponse}|{outcome:"FAILED"|"UNKNOWN";error:string;httpStatus?:number};
-export type RefundExecutionResult={outcome:"CONFIRMED";response:RefundResponse}|{outcome:"FAILED"|"UNKNOWN";error:string;httpStatus?:number};
-function classify(error:unknown){const message=error instanceof Error?error.message:"UNKNOWN_PROVIDER_ERROR";const status=typeof error==="object"&&error!==null&&"httpStatus" in error?Number((error as {httpStatus?:unknown}).httpStatus):undefined;if(status&&status>=400&&status<500&&![408,409,425,429].includes(status))return{outcome:"FAILED" as const,error:message,httpStatus:status};return{outcome:"UNKNOWN" as const,error:message,...(status?{httpStatus:status}:{})};}
-function requiredText(row:unknown,path:string|undefined,label:string){const value=getByPath(row,path);if(typeof value!=="string"&&typeof value!=="number")throw new Error(`PROVIDER_SETTLEMENT_FIELD_REQUIRED:${label}`);const text=String(value).trim();if(!text)throw new Error(`PROVIDER_SETTLEMENT_FIELD_REQUIRED:${label}`);return text;}
-function validMoney(value:string,label:string){const numeric=Number(value);if(!Number.isFinite(numeric)||numeric<0)throw new Error(`PROVIDER_SETTLEMENT_INVALID_AMOUNT:${label}`);return value;}
-export async function executeVendSafely(providerType:ProviderType,connector:ConnectorRecord,secrets:SecretResolver,request:VendRequest):Promise<VendExecutionResult>{try{return{outcome:"CONFIRMED",response:await createProviderAdapter(providerType,connector,secrets).initiateVend(request)}}catch(error){return classify(error);}}
-export async function executeRefundSafely(_providerType:ProviderType,connector:ConnectorRecord,secrets:SecretResolver,request:RefundRequest):Promise<RefundExecutionResult>{const runtime=parseRuntimeConfiguration(connector);if(!runtime.endpoints.initiateRefund)return{outcome:"FAILED",error:"PROVIDER_REFUND_NOT_CONFIGURED"};try{const r=await requestJson(connector,secrets,runtime,"POST",runtime.endpoints.initiateRefund,request);const f=runtime.fields??{};const id=getByPath(r.body,f.providerRefundId);const raw=getByPath(r.body,f.refundStatus??f.providerStatus);const ps=getByPath(r.body,f.providerStatus);if(typeof id!=="string"||!id.trim())return{outcome:"UNKNOWN",error:"PROVIDER_REFUND_REFERENCE_MISSING"};return{outcome:"CONFIRMED",response:{providerRefundId:id,status:normalizeRefundStatus(raw,runtime.refundStatusMap),...(typeof ps==="string"?{providerStatus:ps}:{})}};}catch(error){return classify(error);}}
-export async function fetchProviderSettlements(connector:ConnectorRecord,secrets:SecretResolver,from:string,to:string):Promise<ProviderSettlement[]>{const runtime=parseRuntimeConfiguration(connector);if(!runtime.endpoints.settlements)throw new Error("PROVIDER_SETTLEMENTS_NOT_CONFIGURED");const endpoint=interpolatePath(runtime.endpoints.settlements,{from,to});const r=await requestJson(connector,secrets,runtime,"GET",endpoint);const f=runtime.fields??{};const candidate=f.settlementsArray?getByPath(r.body,f.settlementsArray):r.body;if(!Array.isArray(candidate))throw new Error("PROVIDER_SETTLEMENTS_ARRAY_REQUIRED");return candidate.map(row=>{const providerSettlementId=requiredText(row,f.settlementId,"settlementId");const currency=requiredText(row,f.settlementCurrency,"currency").toUpperCase();if(!/^[A-Z]{3}$/.test(currency))throw new Error("PROVIDER_SETTLEMENT_INVALID_CURRENCY");const grossAmount=validMoney(requiredText(row,f.settlementGrossAmount,"grossAmount"),"grossAmount");const netRaw=getByPath(row,f.settlementNetAmount);const netAmount=validMoney(netRaw===undefined?grossAmount:String(netRaw),"netAmount");const status=requiredText(row,f.settlementStatus,"status");const periodStart=requiredText(row,f.settlementPeriodStart,"periodStart");const periodEnd=requiredText(row,f.settlementPeriodEnd,"periodEnd");const startMs=Date.parse(periodStart),endMs=Date.parse(periodEnd);if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw new Error("PROVIDER_SETTLEMENT_INVALID_PERIOD");return{providerSettlementId,currency,grossAmount,netAmount,status,periodStart,periodEnd};});}
-export async function resolveUnknownTransaction(record:UnknownTransactionRecord,secrets:SecretResolver):Promise<UnknownResolution>{if(record.status!=="UNKNOWN"&&record.status!=="TIMED_OUT")throw new Error("TRANSACTION_NOT_UNKNOWN");if(!record.providerTransactionId)throw new Error("PROVIDER_TRANSACTION_REFERENCE_REQUIRED");const result=await createProviderAdapter(record.providerType,record.connector,secrets).getTransaction(record.providerTransactionId);return{status:result.transactionStatus,vendStatus:result.vendStatus,providerTransactionId:result.providerTransactionId,queriedAt:new Date().toISOString(),...(result.providerStatus?{providerStatus:result.providerStatus}:{})};}
+export interface UnknownResolution {
+  status: TransactionStatus;
+  vendStatus: VendStatus;
+  providerStatus?: string;
+  providerTransactionId: string;
+  queriedAt: string;
+}
+
+export type AdapterFactory = (
+  connector: ConnectorRecord,
+  secrets: SecretResolver
+) => VendingProviderAdapter;
+
+const factories = new Map<ProviderType, AdapterFactory>([
+  ["NATIVE", (connector, secrets) => new NativeVendingAdapter(connector, secrets)],
+  ["CPAY", (connector, secrets) => new CPayAdapter(connector, secrets)]
+]);
+
+export function registerProviderAdapterFactory(
+  providerType: ProviderType,
+  factory: AdapterFactory
+): void {
+  factories.set(providerType, factory);
+}
+
+function assertConnectorOperational(connector: ConnectorRecord): void {
+  if (!connector.enabled) throw new Error("CONNECTOR_DISABLED");
+  if (!(["ACTIVE", "DEGRADED"] as const).includes(
+    connector.status as "ACTIVE" | "DEGRADED"
+  )) {
+    throw new Error(`CONNECTOR_NOT_OPERATIONAL:${connector.status}`);
+  }
+}
+
+export function createProviderAdapter(
+  providerType: ProviderType,
+  connector: ConnectorRecord,
+  secrets: SecretResolver
+): VendingProviderAdapter {
+  const factory = factories.get(providerType);
+  if (!factory) throw new Error(`PROVIDER_ADAPTER_NOT_REGISTERED:${providerType}`);
+  assertConnectorOperational(connector);
+  return factory(connector, secrets);
+}
+
+export type VendExecutionResult =
+  | { outcome: "CONFIRMED"; response: VendResponse }
+  | { outcome: "FAILED" | "UNKNOWN"; error: string; httpStatus?: number };
+
+export type RefundExecutionResult =
+  | { outcome: "CONFIRMED"; response: RefundResponse }
+  | { outcome: "FAILED" | "UNKNOWN"; error: string; httpStatus?: number };
+
+function classify(error: unknown) {
+  const message = error instanceof Error ? error.message : "UNKNOWN_PROVIDER_ERROR";
+  const status = typeof error === "object" && error !== null && "httpStatus" in error
+    ? Number((error as { httpStatus?: unknown }).httpStatus)
+    : undefined;
+
+  if (status && status >= 400 && status < 500 && ![408,409,425,429].includes(status)) {
+    return { outcome: "FAILED" as const, error: message, httpStatus: status };
+  }
+  return {
+    outcome: "UNKNOWN" as const,
+    error: message,
+    ...(status ? { httpStatus: status } : {})
+  };
+}
+
+function requiredText(row: unknown, path: string | undefined, label: string): string {
+  const value = getByPath(row, path);
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw new Error(`PROVIDER_SETTLEMENT_FIELD_REQUIRED:${label}`);
+  }
+  const text = String(value).trim();
+  if (!text) throw new Error(`PROVIDER_SETTLEMENT_FIELD_REQUIRED:${label}`);
+  return text;
+}
+
+function validMoney(value: string, label: string): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error(`PROVIDER_SETTLEMENT_INVALID_AMOUNT:${label}`);
+  }
+  return value;
+}
+
+export async function executeVendSafely(
+  providerType: ProviderType,
+  connector: ConnectorRecord,
+  secrets: SecretResolver,
+  request: VendRequest
+): Promise<VendExecutionResult> {
+  try {
+    return {
+      outcome: "CONFIRMED",
+      response: await createProviderAdapter(providerType, connector, secrets).initiateVend(request)
+    };
+  } catch (error) {
+    return classify(error);
+  }
+}
+
+export async function executeRefundSafely(
+  _providerType: ProviderType,
+  connector: ConnectorRecord,
+  secrets: SecretResolver,
+  request: RefundRequest
+): Promise<RefundExecutionResult> {
+  try {
+    assertConnectorOperational(connector);
+    const runtime = parseRuntimeConfiguration(connector);
+    if (!runtime.endpoints.initiateRefund) {
+      return { outcome: "FAILED", error: "PROVIDER_REFUND_NOT_CONFIGURED" };
+    }
+
+    const response = await requestJson(
+      connector,
+      secrets,
+      runtime,
+      "POST",
+      runtime.endpoints.initiateRefund,
+      request
+    );
+    const fields = runtime.fields ?? {};
+    const providerRefundId = getByPath(response.body, fields.providerRefundId);
+    const rawStatus = getByPath(
+      response.body,
+      fields.refundStatus ?? fields.providerStatus
+    );
+    const providerStatus = getByPath(response.body, fields.providerStatus);
+
+    if (typeof providerRefundId !== "string" || !providerRefundId.trim()) {
+      return { outcome: "UNKNOWN", error: "PROVIDER_REFUND_REFERENCE_MISSING" };
+    }
+
+    return {
+      outcome: "CONFIRMED",
+      response: {
+        providerRefundId,
+        status: normalizeRefundStatus(rawStatus, runtime.refundStatusMap),
+        ...(typeof providerStatus === "string" ? { providerStatus } : {})
+      }
+    };
+  } catch (error) {
+    return classify(error);
+  }
+}
+
+export async function fetchProviderSettlements(
+  connector: ConnectorRecord,
+  secrets: SecretResolver,
+  from: string,
+  to: string
+): Promise<ProviderSettlement[]> {
+  assertConnectorOperational(connector);
+  const runtime = parseRuntimeConfiguration(connector);
+  if (!runtime.endpoints.settlements) {
+    throw new Error("PROVIDER_SETTLEMENTS_NOT_CONFIGURED");
+  }
+
+  const endpoint = interpolatePath(runtime.endpoints.settlements, { from, to });
+  const response = await requestJson(connector, secrets, runtime, "GET", endpoint);
+  const fields = runtime.fields ?? {};
+  const candidate = fields.settlementsArray
+    ? getByPath(response.body, fields.settlementsArray)
+    : response.body;
+  if (!Array.isArray(candidate)) throw new Error("PROVIDER_SETTLEMENTS_ARRAY_REQUIRED");
+
+  return candidate.map((row) => {
+    const providerSettlementId = requiredText(row, fields.settlementId, "settlementId");
+    const currency = requiredText(row, fields.settlementCurrency, "currency").toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      throw new Error("PROVIDER_SETTLEMENT_INVALID_CURRENCY");
+    }
+    const grossAmount = validMoney(
+      requiredText(row, fields.settlementGrossAmount, "grossAmount"),
+      "grossAmount"
+    );
+    const netRaw = getByPath(row, fields.settlementNetAmount);
+    const netAmount = validMoney(
+      netRaw === undefined ? grossAmount : String(netRaw),
+      "netAmount"
+    );
+    const status = requiredText(row, fields.settlementStatus, "status");
+    const periodStart = requiredText(row, fields.settlementPeriodStart, "periodStart");
+    const periodEnd = requiredText(row, fields.settlementPeriodEnd, "periodEnd");
+    const startMs = Date.parse(periodStart);
+    const endMs = Date.parse(periodEnd);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw new Error("PROVIDER_SETTLEMENT_INVALID_PERIOD");
+    }
+
+    return {
+      providerSettlementId,
+      currency,
+      grossAmount,
+      netAmount,
+      status,
+      periodStart,
+      periodEnd
+    };
+  });
+}
+
+export async function resolveUnknownTransaction(
+  record: UnknownTransactionRecord,
+  secrets: SecretResolver
+): Promise<UnknownResolution> {
+  if (record.status !== "UNKNOWN" && record.status !== "TIMED_OUT") {
+    throw new Error("TRANSACTION_NOT_UNKNOWN");
+  }
+  if (!record.providerTransactionId) {
+    throw new Error("PROVIDER_TRANSACTION_REFERENCE_REQUIRED");
+  }
+
+  const result = await createProviderAdapter(
+    record.providerType,
+    record.connector,
+    secrets
+  ).getTransaction(record.providerTransactionId);
+
+  return {
+    status: result.transactionStatus,
+    vendStatus: result.vendStatus,
+    providerTransactionId: result.providerTransactionId,
+    queriedAt: new Date().toISOString(),
+    ...(result.providerStatus ? { providerStatus: result.providerStatus } : {})
+  };
+}
