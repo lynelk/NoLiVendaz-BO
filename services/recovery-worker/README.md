@@ -6,11 +6,11 @@
 
 The worker never initiates a new vend and never submits a new refund.
 
-For vending uncertainty it calls only the original provider transaction query using the frozen provider, connector and provider transaction reference.
+For vending uncertainty it calls only the original provider transaction query using the frozen provider, connector and provider transaction reference. If a query returns a nonterminal state such as `SUBMITTED` or `ACCEPTED`, the transaction remains scheduled for polling until it reaches a terminal outcome or is escalated.
 
-For refund uncertainty it calls only the configured refund-status endpoint using the existing provider refund reference.
+For refund uncertainty it calls only the configured refund-status endpoint using the existing provider refund reference. Transport/configuration failures remain ambiguous and do not mark a refund failed. A provider response that returns a different refund reference is rejected as ambiguous.
 
-If a stable provider reference is unavailable, or repeated safe queries fail to resolve the outcome, the worker opens a deduplicated support case instead of guessing.
+If a stable provider reference is unavailable, a connector cannot safely query the record, or repeated safe queries fail to resolve the outcome, the worker opens a deduplicated support case instead of guessing.
 
 ## Runtime
 
@@ -27,21 +27,25 @@ RECOVERY_WORKER_BATCH_SIZE=25
 DATABASE_URL=postgresql://...
 ```
 
-The interval is clamped to a minimum of 60 seconds. Batch size is clamped to 1..200 per tenant per cycle.
+The interval is validated and clamped to a minimum of 60 seconds. Malformed/non-finite interval values fall back to five minutes. Batch size is clamped to 1..200 per tenant per cycle.
 
 ## Concurrency
 
-Recovery claims use PostgreSQL row locking with `SKIP LOCKED` and a 90-second lease. Multiple worker instances can therefore share a queue without intentionally processing the same record concurrently.
+Recovery uses a claim-one/process-one model with PostgreSQL `FOR UPDATE SKIP LOCKED`, a per-record lease token and a lease duration sized above the connector timeout.
 
-A crashed worker does not permanently own work. Once a lease expires, another cycle may safely query the same provider reference.
+Every completion/failure write must still own the same lease token. If a lease expires and another worker reclaims the record, a stale worker may finish its provider GET request but cannot overwrite the newer worker's database state.
+
+A crashed worker does not permanently own work. Once the lease expires, another cycle may safely query the same frozen provider reference.
 
 ## Escalation
 
 Automated support cases are created for:
 
 - unknown/timed-out transactions with no provider transaction reference after the escalation window;
-- unknown/timed-out transactions that remain unresolved after repeated recovery attempts;
+- transactions whose configured connector cannot be safely queried;
+- transactions that remain unresolved after repeated recovery attempts;
 - pending/unknown refunds with no provider refund reference after the escalation window;
+- refunds without an operational `refund.status` path;
 - refunds that remain unresolved after repeated safe status queries.
 
 `source_key` deduplication prevents repeated recovery cycles from creating duplicate cases for the same unresolved record.
