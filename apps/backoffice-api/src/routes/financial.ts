@@ -4,8 +4,7 @@ import { ConnectorEnvironmentSchema } from "@nolivendaz/canonical-models";
 import { EnvironmentSecretResolver } from "@nolivendaz/provider-sdk";
 import {
   executeRefundSafely,
-  fetchProviderSettlements,
-  type RefundExecutionResult
+  fetchProviderSettlements
 } from "@nolivendaz/provider-orchestrator";
 import { requirePermission } from "../auth.js";
 import {
@@ -77,7 +76,7 @@ export async function registerFinancialRoutes(app: FastifyInstance): Promise<voi
     async (request, reply) => {
       const refundId = (request.params as { refundId: string }).refundId;
       try {
-        let runtime;
+        let runtime: Awaited<ReturnType<typeof getApprovedRefundRuntime>>;
         try {
           runtime = await approveRefund(request.principal!, refundId);
         } catch (error) {
@@ -85,6 +84,38 @@ export async function registerFinancialRoutes(app: FastifyInstance): Promise<voi
             throw error;
           }
           runtime = await getApprovedRefundRuntime(request.principal!, refundId);
+        }
+
+        if (runtime.connector.environment !== requiredEnvironment) {
+          return reply.code(409).send({
+            error: "REFUND_CONNECTOR_ENVIRONMENT_MISMATCH",
+            refundId,
+            requiredEnvironment,
+            selectedEnvironment: runtime.connector.environment,
+            resumable: true
+          });
+        }
+
+        if (!runtime.connector.enabled ||
+            (runtime.connector.status !== "ACTIVE" && runtime.connector.status !== "DEGRADED")) {
+          return reply.code(409).send({
+            error: "REFUND_CONNECTOR_NOT_OPERATIONAL",
+            refundId,
+            connectorStatus: runtime.connector.status,
+            resumable: true
+          });
+        }
+
+        if (!(await connectorHasCapability(
+          request.principal!,
+          runtime.connector.id,
+          "refund.create"
+        ))) {
+          return reply.code(409).send({
+            error: "CONNECTOR_CAPABILITY_REFUND_CREATE_NOT_ENABLED",
+            refundId,
+            resumable: true
+          });
         }
 
         const claim = await claimRefundDispatch(request.principal!, refundId);
@@ -101,38 +132,19 @@ export async function registerFinancialRoutes(app: FastifyInstance): Promise<voi
           });
         }
 
-        let result: RefundExecutionResult;
-        if (runtime.connector.environment !== requiredEnvironment) {
-          result = {
-            outcome: "FAILED",
-            error: `CONNECTOR_ENVIRONMENT_MISMATCH:${runtime.connector.environment}:${requiredEnvironment}`
-          };
-        } else if (
-          !(await connectorHasCapability(
-            request.principal!,
-            runtime.connector.id,
-            "refund.create"
-          ))
-        ) {
-          result = {
-            outcome: "FAILED",
-            error: "CONNECTOR_CAPABILITY_REFUND_CREATE_NOT_ENABLED"
-          };
-        } else {
-          result = await executeRefundSafely(
-            runtime.providerType,
-            runtime.connector,
-            secrets,
-            {
-              transactionId: runtime.transactionId,
-              providerTransactionId: runtime.providerTransactionId,
-              amount: runtime.amount,
-              currency: runtime.currency,
-              reason: runtime.reason,
-              idempotencyKey: runtime.idempotencyKey
-            }
-          );
-        }
+        const result = await executeRefundSafely(
+          runtime.providerType,
+          runtime.connector,
+          secrets,
+          {
+            transactionId: runtime.transactionId,
+            providerTransactionId: runtime.providerTransactionId,
+            amount: runtime.amount,
+            currency: runtime.currency,
+            reason: runtime.reason,
+            idempotencyKey: runtime.idempotencyKey
+          }
+        );
 
         await recordRefundResult(
           request.principal!,
