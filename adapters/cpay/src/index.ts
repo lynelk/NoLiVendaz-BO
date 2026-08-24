@@ -14,6 +14,8 @@ import {
   interpolatePath,
   normalizeVendStatus,
   parseRuntimeConfiguration,
+  requireEndpoint,
+  requireVendingEndpoints,
   requestJson,
   verifyHmacWebhook
 } from "@nolivendaz/provider-sdk";
@@ -38,12 +40,18 @@ export class CPayAdapter implements VendingProviderAdapter {
   }
 
   async getCapabilities() {
-    return [
-      { code: "vend.initiate" },
-      { code: "vend.status" },
-      { code: "transaction.query" },
-      { code: "webhook.receive" }
-    ];
+    const runtime = parseRuntimeConfiguration(this.connector);
+    const capabilities: Array<{ code: string }> = [];
+    if (runtime.endpoints.initiateVend) capabilities.push({ code: "vend.initiate" });
+    if (runtime.endpoints.getVendStatus) capabilities.push({ code: "vend.status" });
+    if (runtime.endpoints.getTransaction || runtime.endpoints.getVendStatus) {
+      capabilities.push({ code: "transaction.query" });
+    }
+    if (this.connector.webhookSecretReference) capabilities.push({ code: "webhook.receive" });
+    if (runtime.endpoints.initiateRefund) capabilities.push({ code: "refund.create" });
+    if (runtime.endpoints.getRefundStatus) capabilities.push({ code: "refund.status" });
+    if (runtime.endpoints.settlements) capabilities.push({ code: "settlement.list" });
+    return capabilities;
   }
 
   async healthCheck(): Promise<ProviderHealthResult> {
@@ -73,21 +81,20 @@ export class CPayAdapter implements VendingProviderAdapter {
       return {
         status: "OUTAGE",
         checkedAt: new Date().toISOString(),
-        details: {
-          error: error instanceof Error ? error.message : "UNKNOWN"
-        }
+        details: { error: error instanceof Error ? error.message : "UNKNOWN" }
       };
     }
   }
 
   async initiateVend(request: VendRequest): Promise<VendResponse> {
     const runtime = parseRuntimeConfiguration(this.connector);
+    const { initiateVend } = requireVendingEndpoints(runtime);
     const result = await requestJson(
       this.connector,
       this.secrets,
       runtime,
       "POST",
-      runtime.endpoints.initiateVend,
+      initiateVend,
       request
     );
     return this.toVendResponse(result.body);
@@ -95,19 +102,21 @@ export class CPayAdapter implements VendingProviderAdapter {
 
   async getVendStatus(reference: string): Promise<VendResponse> {
     const runtime = parseRuntimeConfiguration(this.connector);
+    const { getVendStatus } = requireVendingEndpoints(runtime);
     const result = await requestJson(
       this.connector,
       this.secrets,
       runtime,
       "GET",
-      interpolatePath(runtime.endpoints.getVendStatus, { reference })
+      interpolatePath(getVendStatus, { reference })
     );
     return this.toVendResponse(result.body, reference);
   }
 
   async getTransaction(reference: string): Promise<ProviderTransaction> {
     const runtime = parseRuntimeConfiguration(this.connector);
-    const endpoint = runtime.endpoints.getTransaction ?? runtime.endpoints.getVendStatus;
+    const endpoint = runtime.endpoints.getTransaction
+      ?? requireEndpoint(runtime, "getVendStatus", "CONNECTOR_TRANSACTION_QUERY_ENDPOINT_REQUIRED");
     const result = await requestJson(
       this.connector,
       this.secrets,
@@ -147,11 +156,7 @@ export class CPayAdapter implements VendingProviderAdapter {
       fields.eventProviderTransactionId ?? fields.providerTransactionId
     );
     const providerStatus = getByPath(payload, fields.providerStatus);
-    const rawVendStatus = getByPath(
-      payload,
-      fields.vendStatus ?? fields.providerStatus
-    );
-
+    const rawVendStatus = getByPath(payload, fields.vendStatus ?? fields.providerStatus);
     const eventType = typeof type === "string" ? type : "provider.event";
     const configuredEventStatus = runtime.eventStatusMap?.[eventType];
     const vendStatus = configuredEventStatus ?? (
@@ -163,13 +168,9 @@ export class CPayAdapter implements VendingProviderAdapter {
     return [{
       id: typeof id === "string" ? id : `cpay-${Date.now()}`,
       type: eventType,
-      occurredAt: typeof occurredAt === "string"
-        ? occurredAt
-        : new Date().toISOString(),
+      occurredAt: typeof occurredAt === "string" ? occurredAt : new Date().toISOString(),
       ...(typeof correlationId === "string" ? { correlationId } : {}),
-      ...(typeof providerTransactionId === "string"
-        ? { providerTransactionId }
-        : {}),
+      ...(typeof providerTransactionId === "string" ? { providerTransactionId } : {}),
       ...(vendStatus ? { vendStatus } : {}),
       ...(typeof providerStatus === "string" ? { providerStatus } : {}),
       payload: objectPayload
