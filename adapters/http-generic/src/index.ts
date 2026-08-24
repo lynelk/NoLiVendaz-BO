@@ -29,6 +29,13 @@ function transactionStatus(status: VendResponse["status"]): TransactionStatus {
   return "SUBMITTED";
 }
 
+function normalizeReference(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  if (typeof value === "number" && !Number.isFinite(value)) return undefined;
+  const text = String(value).trim();
+  return text || undefined;
+}
+
 export class GenericHttpVendingAdapter implements VendingProviderAdapter {
   readonly connector: ConnectorRecord;
 
@@ -158,21 +165,21 @@ export class GenericHttpVendingAdapter implements VendingProviderAdapter {
         ? normalizeVendStatus(rawStatus, runtime.statusMap)
         : undefined
     );
-    const id = getByPath(payload, fields.eventId);
+    const id = normalizeReference(getByPath(payload, fields.eventId));
     const occurredAt = getByPath(payload, fields.occurredAt);
-    const correlationId = getByPath(payload, fields.correlationId);
-    const providerTransactionId = getByPath(
+    const correlationId = normalizeReference(getByPath(payload, fields.correlationId));
+    const providerTransactionId = normalizeReference(getByPath(
       payload,
       fields.eventProviderTransactionId ?? fields.providerTransactionId
-    );
+    ));
     const providerStatus = getByPath(payload, fields.providerStatus);
 
     return [{
-      id: typeof id === "string" ? id : `generic-${Date.now()}`,
+      id: id ?? `generic-${Date.now()}`,
       type: eventType,
       occurredAt: typeof occurredAt === "string" ? occurredAt : new Date().toISOString(),
-      ...(typeof correlationId === "string" ? { correlationId } : {}),
-      ...(typeof providerTransactionId === "string" ? { providerTransactionId } : {}),
+      ...(correlationId ? { correlationId } : {}),
+      ...(providerTransactionId ? { providerTransactionId } : {}),
       ...(vendStatus ? { vendStatus } : {}),
       ...(typeof providerStatus === "string" ? { providerStatus } : {}),
       payload: objectPayload
@@ -182,19 +189,18 @@ export class GenericHttpVendingAdapter implements VendingProviderAdapter {
   private toVendResponse(body: unknown, fallbackReference?: string): VendResponse {
     const runtime = parseRuntimeConfiguration(this.connector);
     const fields = runtime.fields ?? {};
-    const providerTransactionId = getByPath(body, fields.providerTransactionId);
+    const providerTransactionId = normalizeReference(getByPath(body, fields.providerTransactionId));
     const rawStatus = getByPath(body, fields.vendStatus ?? fields.providerStatus);
     const providerStatus = getByPath(body, fields.providerStatus);
     const fulfilment = getByPath(body, fields.fulfilment);
+    const resolvedReference = providerTransactionId ?? fallbackReference;
 
-    if (typeof providerTransactionId !== "string" && !fallbackReference) {
+    if (!resolvedReference) {
       throw new Error("PROVIDER_TRANSACTION_REFERENCE_MISSING");
     }
 
     return {
-      providerTransactionId: typeof providerTransactionId === "string"
-        ? providerTransactionId
-        : fallbackReference!,
+      providerTransactionId: resolvedReference,
       status: normalizeVendStatus(rawStatus, runtime.statusMap),
       ...(typeof providerStatus === "string" ? { providerStatus } : {}),
       ...(fulfilment && typeof fulfilment === "object"
