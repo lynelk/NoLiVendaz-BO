@@ -1,3 +1,4 @@
+import { runRecoveryEscalations } from "./escalation.js";
 import { runAllTenantRecoveryCycles } from "./index.js";
 
 const intervalMs = Math.max(
@@ -21,6 +22,9 @@ async function main(): Promise<void> {
   while (!stopping) {
     try {
       const results = await runAllTenantRecoveryCycles(batchSize);
+      for (const result of results) {
+        result.casesEscalated += await runRecoveryEscalations(result.tenantId);
+      }
       console.log(JSON.stringify({
         event: "recovery.cycle.completed",
         tenants: results.length,
