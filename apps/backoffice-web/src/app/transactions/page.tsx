@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { apiGet, BackOfficeApiError } from "../../lib/api.js";
-import { dateTime, money } from "../../lib/format.js";
-import type { TransactionSummary } from "../../lib/types.js";
-import { StatusPill } from "../../components/status-pill.js";
+import { apiGet, BackOfficeApiError } from "../../lib/api";
+import { dateTime, money } from "../../lib/format";
+import type { TransactionSummary } from "../../lib/types";
+import { StatusPill } from "../../components/status-pill";
 
 const filters = ["ALL","UNKNOWN","REFUND_PENDING","FULFILLED","SETTLED","FAILED"] as const;
 
