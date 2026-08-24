@@ -23,7 +23,7 @@ services/recovery-worker   Safe UNKNOWN/refund recovery worker
 services/operations-worker Provider health, alert and credential monitoring
 ```
 
-Supporting packages and services include the provider orchestrator, reconciliation service, webhook gateway, canonical models, database package and provider SDK. Provider integrations live under `adapters/`.
+Supporting packages and services include the provider orchestrator, reconciliation service, webhook gateway, canonical models, database package, provider SDK and financial-message governance utilities. Provider integrations live under `adapters/`.
 
 ## Operator modules
 
@@ -32,6 +32,23 @@ The web application includes Command Centre, Transactions and Transaction 360, C
 Customers & Identity provides a verification queue and customer assurance detail workspace. Identity numbers are displayed only in masked form, phone/email are masked in the operator UI, and service readiness is derived from synchronized NOLI/CPay verification state rather than an operator override.
 
 Provider actions are capability-aware and permission-aware. Financial actions remain enforced by backend state machines, idempotency, maker/checker controls and audit logging.
+
+## Integrated management system
+
+The repository includes an auditable management-system baseline for:
+
+- ISO 9001 quality management;
+- ISO/IEC 27001 information security management and ISO/IEC 27000 concepts;
+- ISO/IEC 20000-1 service management;
+- ISO/IEC 27032 Internet/cybersecurity guidance;
+- ISO 22301 business continuity;
+- ISO 20022 and ISO 8583 financial-message profile governance;
+- ISO 9362 BIC controls;
+- ISO 32212 sustainable-finance transition planning where applicable.
+
+Start with `docs/compliance/README.md` and `docs/compliance/ISO_CONTROL_MATRIX.md`. The machine-readable control register is validated by `pnpm governance:check` and is also included in `pnpm repo:check`.
+
+These artefacts establish implementation and evidence requirements; they are not a claim of certification. Management-system certification requires the operating organization to run the processes, retain objective evidence, perform internal audit and management review, close material nonconformities and undergo independent assessment where applicable.
 
 ## Local setup
 
@@ -47,6 +64,7 @@ Useful checks:
 
 ```bash
 pnpm repo:check
+pnpm governance:check
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -73,6 +91,8 @@ Follow `docs/PRODUCTION_RUNBOOK.md`. A deployment is not production-ready until 
 - High-risk configuration and financial actions require RBAC, approval and immutable audit evidence.
 - Tenant isolation is enforced in application logic and PostgreSQL RLS.
 - Settlement matching uses explicit provider references, not amount/time guesses.
+- Financial-message standards are implemented through approved, versioned profiles at adapter boundaries, never by sprinkling field assumptions through core domain code.
+- BIC syntax validation does not replace authoritative BIC directory validation for production routing.
 
 ## Documentation
 
@@ -82,3 +102,4 @@ Follow `docs/PRODUCTION_RUNBOOK.md`. A deployment is not production-ready until 
 - `docs/APPLICATION_COMPLETION.md` - final implemented scope, known configuration dependencies and acceptance checks
 - `docs/PRODUCTION_RUNBOOK.md` - deployment, monitoring, backup and recovery operations
 - `docs/DEVELOPMENT.md` - developer workflow
+- `docs/compliance/` - integrated quality, security, service, continuity, audit and financial-interoperability governance
