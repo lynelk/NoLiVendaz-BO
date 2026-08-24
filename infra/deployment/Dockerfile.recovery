@@ -4,7 +4,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 COPY . .
 RUN pnpm install --no-frozen-lockfile \
-  && pnpm --filter @nolivendaz/recovery-worker build \
+  && pnpm --filter @nolivendaz/recovery-worker... build \
   && chown -R node:node /app
 
 ENV NODE_ENV=production
