@@ -4,6 +4,7 @@ import { pool } from "@nolivendaz/database";
 import { config } from "./config.js";
 import { registerAuth } from "./auth.js";
 import { registerProviderRoutes } from "./routes/providers.js";
+import { registerProviderLifecycleRoutes } from "./routes/provider-lifecycle.js";
 import { registerProviderHealthRoutes } from "./routes/provider-health.js";
 import { registerTransactionRoutes } from "./routes/transactions.js";
 import { registerWebhookRoutes } from "./routes/webhooks.js";
@@ -25,6 +26,7 @@ export async function buildApp() {
   });
   app.get("/api/v1/auth/context", { preHandler: [app.authenticate] }, async request => ({ data: request.principal }));
   await registerProviderRoutes(app);
+  await registerProviderLifecycleRoutes(app);
   await registerTransactionRoutes(app);
   await registerProviderHealthRoutes(app);
   await registerWebhookRoutes(app);
