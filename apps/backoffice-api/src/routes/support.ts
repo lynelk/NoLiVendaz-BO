@@ -32,6 +32,12 @@ const updateSchema = z.object({
   message: "At least one support-case change is required"
 });
 
+const listSchema = z.object({
+  status: z.string().optional(),
+  priority: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100)
+});
+
 export async function registerSupportRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     "/api/v1/transactions/:transactionId/support-cases",
@@ -80,12 +86,15 @@ export async function registerSupportRoutes(app: FastifyInstance): Promise<void>
   app.get(
     "/api/v1/support/cases",
     { preHandler: [app.authenticate, requirePermission("support.read")] },
-    async (request) => {
-      const query = z.object({
-        status: z.string().optional(),
-        priority: z.string().optional(),
-        limit: z.coerce.number().int().min(1).max(500).default(100)
-      }).parse(request.query);
+    async (request, reply) => {
+      const parsed = listSchema.safeParse(request.query);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "VALIDATION_ERROR",
+          issues: parsed.error.issues
+        });
+      }
+      const query = parsed.data;
       return {
         data: await listSupportCases(request.principal!, {
           limit: query.limit,
