@@ -29,6 +29,8 @@ export interface RoutedRuntime {
   connector: ConnectorRecord;
   serviceCode: string;
   productCode?: string;
+  providerMerchantId?: string;
+  providerSiteId?: string;
   existing: boolean;
 }
 
@@ -160,13 +162,21 @@ export async function prepareRoutedVend(
          x.selected_role AS "selectedRole",
          s.code AS "serviceCode",
          pp.provider_product_code AS "productCode",
+         mpm.provider_merchant_id AS "providerMerchantId",
+         spm.provider_site_id AS "providerSiteId",
          COALESCE(h.health_status, 'UNKNOWN') AS "healthStatus",
          ${runtimeSelect}
        FROM candidates x
+       JOIN merchants m
+         ON m.id = $2::uuid AND m.tenant_id = $1
+       LEFT JOIN sites si
+         ON si.id = $7::uuid AND si.merchant_id = m.id
        JOIN providers p ON p.id = x.candidate_provider_id
        JOIN services s ON s.id = x.service_id
        LEFT JOIN provider_products pp
-         ON pp.provider_id = p.id AND pp.product_id = $3
+         ON pp.provider_id = p.id
+        AND pp.product_id = $3
+        AND pp.enabled = true
        LEFT JOIN LATERAL (
          SELECT pc.*
            FROM provider_connectors pc
@@ -193,12 +203,27 @@ export async function prepareRoutedVend(
           ORDER BY checked_at DESC
           LIMIT 1
        ) h ON true
+       LEFT JOIN merchant_provider_mappings mpm
+         ON mpm.merchant_id = m.id AND mpm.provider_id = p.id
+       LEFT JOIN site_provider_mappings spm
+         ON spm.site_id = si.id AND spm.provider_id = p.id
        WHERE x.tenant_id = $1
-         AND (x.merchant_id IS NULL OR x.merchant_id = $2::uuid)
+         AND (x.merchant_id IS NULL OR x.merchant_id = m.id)
          AND x.service_id = $4
          AND (x.product_id IS NULL OR x.product_id = $3::uuid)
+         AND (x.country IS NULL OR x.country = m.country)
+         AND (x.region IS NULL OR x.region = si.region)
          AND (x.currency IS NULL OR x.currency = $5)
+         AND ($7::uuid IS NULL OR si.id IS NOT NULL)
          AND ($3::uuid IS NULL OR pp.product_id IS NOT NULL)
+         AND (
+           COALESCE(pc.runtime_configuration #>> '{routing,requireMerchantMapping}', 'false') <> 'true'
+           OR mpm.id IS NOT NULL
+         )
+         AND (
+           COALESCE(pc.runtime_configuration #>> '{routing,requireSiteMapping}', 'false') <> 'true'
+           OR spm.id IS NOT NULL
+         )
          AND x.enabled = true
          AND now() >= x.effective_from
          AND (x.effective_to IS NULL OR now() < x.effective_to)
@@ -218,12 +243,22 @@ export async function prepareRoutedVend(
         input.productId ?? null,
         input.serviceId,
         input.currency,
-        input.environment
+        input.environment,
+        input.siteId ?? null
       ]
     );
 
     const row = selected.rows[0] as Record<string, unknown> | undefined;
     if (!row) throw new Error("NO_ELIGIBLE_VENDING_ROUTE");
+
+    const providerMappingMetadata = {
+      ...(row.providerMerchantId
+        ? { providerMerchantId: String(row.providerMerchantId) }
+        : {}),
+      ...(row.providerSiteId
+        ? { providerSiteId: String(row.providerSiteId) }
+        : {})
+    };
 
     const inserted = await client.query(
       `INSERT INTO transactions (
@@ -254,6 +289,7 @@ export async function prepareRoutedVend(
         row.routeId,
         JSON.stringify({
           ...(input.customerReference ? { customerReference: input.customerReference } : {}),
+          ...providerMappingMetadata,
           ...(input.metadata ?? {})
         })
       ]
@@ -275,7 +311,7 @@ export async function prepareRoutedVend(
         row.providerId,
         row.connectorId,
         row.selectedRole,
-        "Pre-dispatch route selected after environment, lifecycle, capability and health gates",
+        "Pre-dispatch route selected after geography, environment, lifecycle, mapping, capability and health gates",
         row.healthStatus
       ]
     );
@@ -286,7 +322,8 @@ export async function prepareRoutedVend(
       connectorId: row.connectorId,
       selectedRole: row.selectedRole,
       healthStatus: row.healthStatus,
-      environment: input.environment
+      environment: input.environment,
+      ...providerMappingMetadata
     };
 
     await client.query(
@@ -321,6 +358,10 @@ export async function prepareRoutedVend(
       connector: connectorFromRow(row),
       serviceCode: String(row.serviceCode),
       ...(row.productCode ? { productCode: String(row.productCode) } : {}),
+      ...(row.providerMerchantId
+        ? { providerMerchantId: String(row.providerMerchantId) }
+        : {}),
+      ...(row.providerSiteId ? { providerSiteId: String(row.providerSiteId) } : {}),
       existing: false
     };
   });
