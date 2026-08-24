@@ -4,7 +4,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 COPY . .
 RUN pnpm install --no-frozen-lockfile \
-  && pnpm --filter @nolivendaz/backoffice-api build \
+  && pnpm --filter @nolivendaz/backoffice-api... build \
   && chown -R node:node /app
 
 ENV NODE_ENV=production
