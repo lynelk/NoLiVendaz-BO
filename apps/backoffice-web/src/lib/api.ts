@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { cookies, headers } from "next/headers";
 
 const baseUrl = (process.env.BACKOFFICE_API_URL ?? "http://localhost:4000").replace(/\/$/, "");
@@ -31,18 +32,18 @@ async function authorizationHeader(): Promise<string> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const incomingHeaders = await headers();
-  const correlationId = incomingHeaders.get("x-correlation-id") ?? crypto.randomUUID();
+  const correlationId = incomingHeaders.get("x-correlation-id") ?? randomUUID();
   const authorization = await authorizationHeader();
+  const requestHeaders = new Headers(init?.headers);
+  requestHeaders.set("accept", "application/json");
+  requestHeaders.set("authorization", authorization);
+  requestHeaders.set("x-correlation-id", correlationId);
+  if (init?.body) requestHeaders.set("content-type", "application/json");
+
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     cache: "no-store",
-    headers: {
-      accept: "application/json",
-      authorization,
-      "x-correlation-id": correlationId,
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      ...init?.headers
-    }
+    headers: requestHeaders
   });
 
   const text = await response.text();
@@ -56,10 +57,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const objectPayload = payload && typeof payload === "object"
       ? payload as Record<string, unknown>
       : {};
+    const code = typeof objectPayload.error === "string" ? objectPayload.error : undefined;
+    if (code) {
+      throw new BackOfficeApiError(
+        response.status,
+        typeof objectPayload.message === "string" ? objectPayload.message : `API request failed (${response.status})`,
+        code
+      );
+    }
     throw new BackOfficeApiError(
       response.status,
-      typeof objectPayload.message === "string" ? objectPayload.message : `API request failed (${response.status})`,
-      typeof objectPayload.error === "string" ? objectPayload.error : undefined
+      typeof objectPayload.message === "string" ? objectPayload.message : `API request failed (${response.status})`
     );
   }
 
@@ -71,7 +79,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   return response.data;
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+export async function apiPost<T = unknown>(path: string, body?: unknown): Promise<T> {
   const response = await request<{ data: T }>(path, {
     method: "POST",
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
