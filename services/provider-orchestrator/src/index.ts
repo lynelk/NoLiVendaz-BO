@@ -1,82 +1,19 @@
 import { CPayAdapter } from "@nolivendaz/adapter-cpay";
 import { NativeVendingAdapter } from "@nolivendaz/adapter-native-vending";
-import type {
-  ConnectorRecord,
-  ProviderType,
-  TransactionStatus,
-  VendStatus
-} from "@nolivendaz/canonical-models";
-import type {
-  SecretResolver,
-  VendingProviderAdapter
-} from "@nolivendaz/provider-sdk";
+import type { ConnectorRecord,ProviderType,TransactionStatus,VendStatus } from "@nolivendaz/canonical-models";
+import { type ProviderSettlement,type RefundRequest,type RefundResponse,type SecretResolver,type VendRequest,type VendResponse,type VendingProviderAdapter,getByPath,interpolatePath,normalizeRefundStatus,parseRuntimeConfiguration,requestJson } from "@nolivendaz/provider-sdk";
 
-export interface UnknownTransactionRecord {
-  id: string;
-  providerType: ProviderType;
-  connector: ConnectorRecord;
-  providerTransactionId: string | null;
-  status: TransactionStatus;
-}
+export interface UnknownTransactionRecord{id:string;providerType:ProviderType;connector:ConnectorRecord;providerTransactionId:string|null;status:TransactionStatus}
+export interface UnknownResolution{status:TransactionStatus;vendStatus:VendStatus;providerStatus?:string;providerTransactionId:string;queriedAt:string}
+export type AdapterFactory=(connector:ConnectorRecord,secrets:SecretResolver)=>VendingProviderAdapter;
+const factories=new Map<ProviderType,AdapterFactory>([["NATIVE",(c,s)=>new NativeVendingAdapter(c,s)],["CPAY",(c,s)=>new CPayAdapter(c,s)]]);
+export function registerProviderAdapterFactory(providerType:ProviderType,factory:AdapterFactory){factories.set(providerType,factory);}
+export function createProviderAdapter(providerType:ProviderType,connector:ConnectorRecord,secrets:SecretResolver){const f=factories.get(providerType);if(!f)throw new Error(`PROVIDER_ADAPTER_NOT_REGISTERED:${providerType}`);if(!connector.enabled)throw new Error("CONNECTOR_DISABLED");return f(connector,secrets);}
 
-export interface UnknownResolution {
-  status: TransactionStatus;
-  vendStatus: VendStatus;
-  providerStatus?: string;
-  providerTransactionId: string;
-  queriedAt: string;
-}
-
-export type AdapterFactory = (
-  connector: ConnectorRecord,
-  secrets: SecretResolver
-) => VendingProviderAdapter;
-
-const factories = new Map<ProviderType, AdapterFactory>([
-  ["NATIVE", (connector, secrets) => new NativeVendingAdapter(connector, secrets)],
-  ["CPAY", (connector, secrets) => new CPayAdapter(connector, secrets)]
-]);
-
-export function registerProviderAdapterFactory(
-  providerType: ProviderType,
-  factory: AdapterFactory
-): void {
-  factories.set(providerType, factory);
-}
-
-export function createProviderAdapter(
-  providerType: ProviderType,
-  connector: ConnectorRecord,
-  secrets: SecretResolver
-): VendingProviderAdapter {
-  const factory = factories.get(providerType);
-  if (!factory) throw new Error(`PROVIDER_ADAPTER_NOT_REGISTERED:${providerType}`);
-  if (!connector.enabled) throw new Error("CONNECTOR_DISABLED");
-  return factory(connector, secrets);
-}
-
-export async function resolveUnknownTransaction(
-  record: UnknownTransactionRecord,
-  secrets: SecretResolver
-): Promise<UnknownResolution> {
-  if (record.status !== "UNKNOWN" && record.status !== "TIMED_OUT") {
-    throw new Error("TRANSACTION_NOT_UNKNOWN");
-  }
-  if (!record.providerTransactionId) {
-    throw new Error("PROVIDER_TRANSACTION_REFERENCE_REQUIRED");
-  }
-
-  const adapter = createProviderAdapter(record.providerType, record.connector, secrets);
-
-  // Safety invariant: resolution queries the original provider only.
-  // It must never invoke initiateVend or switch to another provider.
-  const result = await adapter.getTransaction(record.providerTransactionId);
-
-  return {
-    status: result.transactionStatus,
-    vendStatus: result.vendStatus,
-    providerTransactionId: result.providerTransactionId,
-    queriedAt: new Date().toISOString(),
-    ...(result.providerStatus ? { providerStatus: result.providerStatus } : {})
-  };
-}
+export type VendExecutionResult={outcome:"CONFIRMED";response:VendResponse}|{outcome:"FAILED"|"UNKNOWN";error:string;httpStatus?:number};
+export type RefundExecutionResult={outcome:"CONFIRMED";response:RefundResponse}|{outcome:"FAILED"|"UNKNOWN";error:string;httpStatus?:number};
+function classify(error:unknown){const message=error instanceof Error?error.message:"UNKNOWN_PROVIDER_ERROR";const status=typeof error==="object"&&error!==null&&"httpStatus" in error?Number((error as {httpStatus?:unknown}).httpStatus):undefined;if(status&&status>=400&&status<500&&![408,409,425,429].includes(status))return{outcome:"FAILED" as const,error:message,httpStatus:status};return{outcome:"UNKNOWN" as const,error:message,...(status?{httpStatus:status}:{})};}
+export async function executeVendSafely(providerType:ProviderType,connector:ConnectorRecord,secrets:SecretResolver,request:VendRequest):Promise<VendExecutionResult>{try{return{outcome:"CONFIRMED",response:await createProviderAdapter(providerType,connector,secrets).initiateVend(request)}}catch(error){return classify(error);}}
+export async function executeRefundSafely(_providerType:ProviderType,connector:ConnectorRecord,secrets:SecretResolver,request:RefundRequest):Promise<RefundExecutionResult>{const runtime=parseRuntimeConfiguration(connector);if(!runtime.endpoints.initiateRefund)return{outcome:"FAILED",error:"PROVIDER_REFUND_NOT_CONFIGURED"};try{const r=await requestJson(connector,secrets,runtime,"POST",runtime.endpoints.initiateRefund,request);const f=runtime.fields??{};const id=getByPath(r.body,f.providerRefundId);const raw=getByPath(r.body,f.refundStatus??f.providerStatus);const ps=getByPath(r.body,f.providerStatus);return{outcome:"CONFIRMED",response:{providerRefundId:typeof id==="string"?id:"UNKNOWN",status:normalizeRefundStatus(raw,runtime.refundStatusMap),...(typeof ps==="string"?{providerStatus:ps}:{})}};}catch(error){return classify(error);}}
+export async function fetchProviderSettlements(connector:ConnectorRecord,secrets:SecretResolver,from:string,to:string):Promise<ProviderSettlement[]>{const runtime=parseRuntimeConfiguration(connector);if(!runtime.endpoints.settlements)throw new Error("PROVIDER_SETTLEMENTS_NOT_CONFIGURED");const endpoint=interpolatePath(runtime.endpoints.settlements,{from,to});const r=await requestJson(connector,secrets,runtime,"GET",endpoint);const f=runtime.fields??{};const candidate=f.settlementsArray?getByPath(r.body,f.settlementsArray):r.body;const rows=Array.isArray(candidate)?candidate:[];return rows.map((row,index)=>({providerSettlementId:String(getByPath(row,f.settlementId)??`settlement-${index}`),currency:String(getByPath(row,f.settlementCurrency)??"UGX"),grossAmount:String(getByPath(row,f.settlementGrossAmount)??"0"),netAmount:String(getByPath(row,f.settlementNetAmount)??getByPath(row,f.settlementGrossAmount)??"0"),status:String(getByPath(row,f.settlementStatus)??"UNKNOWN"),periodStart:String(getByPath(row,f.settlementPeriodStart)??from),periodEnd:String(getByPath(row,f.settlementPeriodEnd)??to)}));}
+export async function resolveUnknownTransaction(record:UnknownTransactionRecord,secrets:SecretResolver):Promise<UnknownResolution>{if(record.status!=="UNKNOWN"&&record.status!=="TIMED_OUT")throw new Error("TRANSACTION_NOT_UNKNOWN");if(!record.providerTransactionId)throw new Error("PROVIDER_TRANSACTION_REFERENCE_REQUIRED");const result=await createProviderAdapter(record.providerType,record.connector,secrets).getTransaction(record.providerTransactionId);return{status:result.transactionStatus,vendStatus:result.vendStatus,providerTransactionId:result.providerTransactionId,queriedAt:new Date().toISOString(),...(result.providerStatus?{providerStatus:result.providerStatus}:{})};}
