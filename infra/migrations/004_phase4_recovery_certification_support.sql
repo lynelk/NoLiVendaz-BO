@@ -1,11 +1,13 @@
 ALTER TABLE transactions
   ADD COLUMN recovery_lease_until timestamptz,
+  ADD COLUMN recovery_lease_token uuid,
   ADD COLUMN recovery_attempts integer NOT NULL DEFAULT 0 CHECK (recovery_attempts >= 0),
   ADD COLUMN next_recovery_at timestamptz,
   ADD COLUMN recovery_last_error text;
 
 ALTER TABLE refunds
   ADD COLUMN recovery_lease_until timestamptz,
+  ADD COLUMN recovery_lease_token uuid,
   ADD COLUMN recovery_attempts integer NOT NULL DEFAULT 0 CHECK (recovery_attempts >= 0),
   ADD COLUMN next_recovery_at timestamptz,
   ADD COLUMN recovery_last_error text;
@@ -113,10 +115,49 @@ CREATE INDEX settlement_transaction_links_transaction_idx
 
 CREATE INDEX transactions_recovery_queue_idx
   ON transactions(tenant_id,next_recovery_at,recovery_lease_until)
-  WHERE normalized_status IN ('UNKNOWN','TIMED_OUT');
+  WHERE normalized_status IN ('UNKNOWN','TIMED_OUT','CREATED','SUBMITTED','ACCEPTED');
 CREATE INDEX refunds_recovery_queue_idx
   ON refunds(tenant_id,next_recovery_at,recovery_lease_until)
   WHERE status IN ('PENDING','UNKNOWN');
+
+CREATE OR REPLACE FUNCTION app.connector_certification_hash(connector_uuid uuid)
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT encode(
+    digest(
+      (
+        jsonb_build_object(
+          'connectorId', pc.id,
+          'providerId', pc.provider_id,
+          'environment', pc.environment,
+          'apiVersion', pc.api_version,
+          'baseUrl', pc.base_url,
+          'authType', pc.auth_type,
+          'credentialReference', pc.credential_reference,
+          'webhookSecretReference', pc.webhook_secret_reference,
+          'timeoutMs', pc.timeout_ms,
+          'retryPolicy', pc.retry_policy,
+          'runtimeConfiguration', pc.runtime_configuration,
+          'healthCheckPath', pc.health_check_path,
+          'status', pc.status,
+          'enabled', pc.enabled,
+          'capabilities', COALESCE((
+            SELECT jsonb_agg(c.code ORDER BY c.code)
+              FROM connector_capabilities cc
+              JOIN capabilities c ON c.id=cc.capability_id
+             WHERE cc.connector_id=pc.id AND cc.enabled=true
+          ), '[]'::jsonb)
+        )
+      )::text,
+      'sha256'
+    ),
+    'hex'
+  )
+  FROM provider_connectors pc
+  WHERE pc.id=connector_uuid
+$$;
 
 ALTER TABLE support_cases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE support_cases FORCE ROW LEVEL SECURITY;
