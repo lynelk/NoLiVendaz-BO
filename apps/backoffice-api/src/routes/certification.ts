@@ -8,7 +8,10 @@ import {
   listCertificationRuns,
   startCertificationRun
 } from "../repositories/phase4-repository.js";
-import { approveCertificationSafely } from "../repositories/phase4-guards-repository.js";
+import {
+  approveCertificationSafely,
+  failCertificationRun
+} from "../repositories/phase4-guards-repository.js";
 
 const secrets = new EnvironmentSecretResolver();
 
@@ -132,7 +135,9 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
           const fields = runtime.fields ?? {};
           const missingFields: string[] = [];
           const requireField = (capability: string, field: unknown, label: string) => {
-            if (certification.capabilities.includes(capability) && !field) missingFields.push(`${capability}:${label}`);
+            if (certification.capabilities.includes(capability) && !field) {
+              missingFields.push(`${capability}:${label}`);
+            }
           };
           requireField("vend.initiate", fields.providerTransactionId, "providerTransactionId");
           requireField("vend.initiate", fields.vendStatus ?? fields.providerStatus, "vendStatus/providerStatus");
@@ -220,10 +225,21 @@ export async function registerCertificationRoutes(app: FastifyInstance): Promise
         );
         return reply.code(result.status === "PASSED" ? 200 : 422).send({ data: result });
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        if (runId) {
+          try {
+            await failCertificationRun(request.principal!, runId, message);
+          } catch (finalizationError) {
+            request.log.error(
+              { err: finalizationError, runId },
+              "Certification failure finalization failed"
+            );
+          }
+        }
         request.log.error({ err: error, runId }, "Certification run failed");
         return reply.code(409).send({
           error: "CERTIFICATION_RUN_FAILED",
-          message: error instanceof Error ? error.message : "Unknown error",
+          message,
           ...(runId ? { runId } : {})
         });
       }
