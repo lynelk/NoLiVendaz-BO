@@ -1,14 +1,8 @@
 "use server";
-
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { apiPost } from "../../lib/api.js";
-
-export async function queryOriginalProvider(formData: FormData) {
-  const transactionId = formData.get("transactionId");
-  if (typeof transactionId !== "string" || !/^[0-9a-f-]{36}$/i.test(transactionId)) {
-    throw new Error("INVALID_TRANSACTION_ID");
-  }
-  await apiPost(`/api/v1/transactions/${transactionId}/query-provider`);
-  revalidatePath(`/transactions/${transactionId}`);
-  revalidatePath("/");
-}
+function transactionId(formData:FormData){const value=formData.get("transactionId");if(typeof value!=="string"||!/^[0-9a-f-]{36}$/i.test(value))throw new Error("INVALID_TRANSACTION_ID");return value;}
+export async function queryOriginalProvider(formData:FormData){const id=transactionId(formData);await apiPost(`/api/v1/transactions/${id}/query-provider`);revalidatePath(`/transactions/${id}`);revalidatePath("/");}
+export async function requestRefund(formData:FormData){const id=transactionId(formData);const amount=String(formData.get("amount")??"").trim();const reason=String(formData.get("reason")??"").trim();if(!/^\d+(\.\d{1,6})?$/.test(amount)||Number(amount)<=0)throw new Error("INVALID_REFUND_AMOUNT");if(reason.length<5)throw new Error("REFUND_REASON_REQUIRED");await apiPost(`/api/v1/transactions/${id}/refunds`,{amount,reason,idempotencyKey:`bo-${id}-${randomUUID()}`});revalidatePath(`/transactions/${id}`);revalidatePath("/finance");revalidatePath("/");}
+export async function openSupportCase(formData:FormData){const id=transactionId(formData);const title=String(formData.get("title")??"").trim(),description=String(formData.get("description")??"").trim(),priority=String(formData.get("priority")??"MEDIUM");if(title.length<3)throw new Error("SUPPORT_TITLE_REQUIRED");await apiPost(`/api/v1/transactions/${id}/support-cases`,{category:"TRANSACTION_UNKNOWN",priority,title,...(description?{description}:{})});revalidatePath(`/transactions/${id}`);revalidatePath("/support");revalidatePath("/");}
