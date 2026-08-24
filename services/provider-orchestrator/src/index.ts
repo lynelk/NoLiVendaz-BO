@@ -107,6 +107,18 @@ function classify(error: unknown) {
   };
 }
 
+function ambiguousQueryFailure(error: unknown): RefundExecutionResult {
+  const message = error instanceof Error ? error.message : "UNKNOWN_PROVIDER_ERROR";
+  const status = typeof error === "object" && error !== null && "httpStatus" in error
+    ? Number((error as { httpStatus?: unknown }).httpStatus)
+    : undefined;
+  return {
+    outcome: "UNKNOWN",
+    error: message,
+    ...(status && Number.isFinite(status) ? { httpStatus: status } : {})
+  };
+}
+
 function requiredText(row: unknown, path: string | undefined, label: string): string {
   const value = getByPath(row, path);
   if (typeof value !== "string" && typeof value !== "number") {
@@ -206,22 +218,26 @@ export async function queryRefundStatusSafely(
       interpolatePath(endpoint, { reference: providerRefundId })
     );
     const fields = runtime.fields ?? {};
-    const returnedId = getByPath(response.body, fields.providerRefundId);
+    const returnedIdRaw = getByPath(response.body, fields.providerRefundId);
+    const returnedId = typeof returnedIdRaw === "string" || typeof returnedIdRaw === "number"
+      ? String(returnedIdRaw).trim()
+      : "";
+    if (returnedId && returnedId !== providerRefundId) {
+      return { outcome: "UNKNOWN", error: "PROVIDER_REFUND_REFERENCE_MISMATCH" };
+    }
+
     const rawStatus = getByPath(response.body, fields.refundStatus ?? fields.providerStatus);
     const providerStatus = getByPath(response.body, fields.providerStatus);
-    const resolvedId = typeof returnedId === "string" && returnedId.trim()
-      ? returnedId
-      : providerRefundId;
     return {
       outcome: "CONFIRMED",
       response: {
-        providerRefundId: resolvedId,
+        providerRefundId,
         status: normalizeRefundStatus(rawStatus, runtime.refundStatusMap),
         ...(typeof providerStatus === "string" ? { providerStatus } : {})
       }
     };
   } catch (error) {
-    return classify(error);
+    return ambiguousQueryFailure(error);
   }
 }
 
@@ -306,8 +322,15 @@ export async function resolveUnknownTransaction(
   record: UnknownTransactionRecord,
   secrets: SecretResolver
 ): Promise<UnknownResolution> {
-  if (record.status !== "UNKNOWN" && record.status !== "TIMED_OUT") {
-    throw new Error("TRANSACTION_NOT_UNKNOWN");
+  const recoverableStatuses: TransactionStatus[] = [
+    "UNKNOWN",
+    "TIMED_OUT",
+    "CREATED",
+    "SUBMITTED",
+    "ACCEPTED"
+  ];
+  if (!recoverableStatuses.includes(record.status)) {
+    throw new Error("TRANSACTION_NOT_RECOVERABLE");
   }
   if (!record.providerTransactionId) {
     throw new Error("PROVIDER_TRANSACTION_REFERENCE_REQUIRED");
