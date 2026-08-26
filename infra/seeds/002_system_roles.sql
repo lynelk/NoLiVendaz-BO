@@ -46,14 +46,14 @@ SELECT r.id,p.id FROM roles r CROSS JOIN permissions p WHERE r.tenant_id IS NULL
 ON CONFLICT DO NOTHING;
 
 -- Authoritative identity synchronization additionally requires NOLI_IDENTITY_SYNC_SECRET at the
--- HTTP boundary. Do not grant the sync permissions to ordinary system roles.
+-- HTTP boundary. No human system-defined role, including PLATFORM_SUPER_ADMIN, retains these write
+-- permissions after seeding. Provision them only to the dedicated NOLI/CPay integration principal.
 DELETE FROM role_permissions rp
 USING roles r, permissions p
 WHERE rp.role_id=r.id
   AND rp.permission_id=p.id
   AND r.tenant_id IS NULL
   AND r.system_defined=true
-  AND r.code<>'PLATFORM_SUPER_ADMIN'
   AND p.code IN ('customer.identity.sync','customer.identity.capability.sync');
 
 COMMIT;
