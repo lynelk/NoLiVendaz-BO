@@ -69,11 +69,13 @@ Both write routes require all three controls:
 2. the dedicated sync permission (`customer.identity.sync` or `customer.identity.capability.sync`);
 3. header `X-NOLI-Identity-Sync-Secret` matching runtime secret `NOLI_IDENTITY_SYNC_SECRET`.
 
-Human system roles receive read/investigation permissions only. Authoritative synchronization credentials belong to the NOLI/CPay integration principal and must not be exposed in the operator browser.
+Human system roles, including `PLATFORM_SUPER_ADMIN`, receive read/investigation permissions only. Authoritative synchronization permissions belong exclusively to an explicitly provisioned NOLI/CPay integration principal and must not be exposed in the operator browser.
 
 ### Customer identity synchronization payload
 
-The authoritative source must include `sourceUpdatedAt` as an ISO-8601 timestamp in every synchronization request. Optional fields use these semantics:
+The authoritative source must include `sourceUpdatedAt` as a UTC ISO-8601 timestamp with exactly millisecond precision in every synchronization request, for example `2026-08-24T20:01:00.123Z`. This intentionally avoids sub-millisecond ordering ambiguity between JavaScript and PostgreSQL timestamps.
+
+Optional fields use these semantics:
 
 - omitted / `undefined`: preserve the previously stored projection value;
 - explicit `null`: clear a nullable value where the schema allows `null`;
@@ -81,7 +83,7 @@ The authoritative source must include `sourceUpdatedAt` as an ISO-8601 timestamp
 - the same timestamp with an identical payload: treated as idempotent;
 - the same timestamp with different assurance data: rejected as `CONFLICTING_IDENTITY_SYNC_TIMESTAMP`.
 
-This ordering rule prevents delayed or same-second conflicting events from making final assurance state depend on arrival order.
+Synchronization is serialized per tenant/customer reference before the previous projection is read. This prevents concurrent partial events from preserving stale values and overwriting fields changed by an earlier event. The same transaction-scoped serialization is applied to provider capability synchronization.
 
 Example customer assurance payload shape:
 
@@ -106,13 +108,13 @@ Example customer assurance payload shape:
   "serviceAccessPolicyVersion": "NOLI_POWER_BANK_RENTAL_V1",
   "serviceAccessSource": "NOLI",
   "source": "NOLI",
-  "sourceUpdatedAt": "2026-08-24T20:01:00.000Z"
+  "sourceUpdatedAt": "2026-08-24T20:01:00.123Z"
 }
 ```
 
 ### Provider capability synchronization
 
-Each capability item must include `sourceUpdatedAt`. Older snapshots are rejected. Equal-timestamp identical snapshots are idempotent; equal-timestamp conflicting snapshots are rejected. Capability data must never be inferred from a customer verification result.
+Each capability item must include millisecond-precision `sourceUpdatedAt`. Older snapshots are rejected. Equal-timestamp identical snapshots are idempotent; equal-timestamp conflicting snapshots are rejected. Capability data must never be inferred from a customer verification result.
 
 ## Operator UI
 
@@ -133,4 +135,5 @@ Raw identification numbers must never be pasted into support cases, incident not
 - CPay/provider references are retained for reconciliation and review.
 - Stale source events cannot overwrite newer assurance state.
 - Equal-timestamp conflicting events are rejected instead of being resolved by arrival order.
+- Concurrent partial projections are serialized before preservation logic is evaluated.
 - Identity synchronization is append-only audited through the existing immutable audit log.
