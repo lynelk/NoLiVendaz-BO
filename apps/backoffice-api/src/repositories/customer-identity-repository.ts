@@ -189,7 +189,10 @@ export async function getCustomerIdentity(p:Principal,id:string){
 
 export async function syncCustomerIdentity(p:Principal,input:IdentitySyncInput){
   return withTenantContext(context(p),async c=>{
-    const before=(await c.query(`SELECT * FROM customers WHERE tenant_id=$1 AND external_reference=$2`,[p.tenantId,input.externalReference])).rows[0] as Record<string,any>|undefined;
+    // Serialize the entire read/merge/write lifecycle even when the customer row does not exist yet.
+    // This prevents a newer partial event from preserving fields from a stale pre-commit snapshot.
+    await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`noli:customer-identity:${p.tenantId}:${input.externalReference}`]);
+    const before=(await c.query(`SELECT ${safeCustomerSelect} FROM customers WHERE tenant_id=$1 AND external_reference=$2`,[p.tenantId,input.externalReference])).rows[0] as Record<string,any>|undefined;
     const effective=effectiveCustomerSync(before,input);
     validateEffectiveCustomerSync(effective);
 
@@ -253,7 +256,7 @@ export async function syncCustomerIdentity(p:Principal,input:IdentitySyncInput){
       effective.profileSetupComplete,effective.termsAccepted,effective.identityConfigured,effective.identityConsentAccepted,
       effective.serviceAccessPolicyVersion,effective.serviceAccessSource
     ]);
-    let row=result.rows[0] as Record<string,any>|undefined;
+    const row=result.rows[0] as Record<string,any>|undefined;
     if(!row){
       const current=(await c.query(`SELECT ${safeCustomerSelect} FROM customers WHERE tenant_id=$1 AND external_reference=$2`,[p.tenantId,input.externalReference])).rows[0] as Record<string,any>|undefined;
       if(current&&timeMs(current.identity_source_updated_at)===incomingEventTime&&sameCustomerSync(current,effective))return withServiceAccess(current);
@@ -291,6 +294,9 @@ export async function syncIdentityProviderCapabilities(p:Principal,inputs:Identi
   return withTenantContext(context(p),async c=>{
     const results=[] as Array<Record<string,unknown>>;
     for(const input of inputs){
+      // Capability rows can also be absent on first sync, so use an advisory transaction lock
+      // rather than relying only on SELECT FOR UPDATE.
+      await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`noli:identity-capability:${p.tenantId}:${input.providerCode}`]);
       const before=(await c.query(`SELECT * FROM identity_provider_capabilities WHERE tenant_id=$1 AND provider_code=$2`,[p.tenantId,input.providerCode])).rows[0] as Record<string,any>|undefined;
       const beforeTime=timeMs(before?.source_updated_at);
       const incomingTime=timeMs(input.sourceUpdatedAt);
@@ -325,7 +331,7 @@ export async function syncIdentityProviderCapabilities(p:Principal,inputs:Identi
                   last_synced_at,created_at,updated_at
       `,[p.tenantId,input.providerCode,input.enabled,input.supportsSync,input.supportsAsync,
           input.supportedIdentityTypes,input.supportedCountries,input.source,input.sourceReference??null,input.sourceUpdatedAt]);
-      let row=write.rows[0] as Record<string,any>|undefined;
+      const row=write.rows[0] as Record<string,any>|undefined;
       if(!row){
         const current=(await c.query(`SELECT * FROM identity_provider_capabilities WHERE tenant_id=$1 AND provider_code=$2`,[p.tenantId,input.providerCode])).rows[0] as Record<string,any>|undefined;
         if(current&&timeMs(current.source_updated_at)===incomingTime&&sameCapability(current,input)){results.push(current);continue;}
