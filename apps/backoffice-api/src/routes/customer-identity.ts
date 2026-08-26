@@ -7,6 +7,10 @@ import { verifyIdentitySyncSecret } from "../customer-identity-sync-auth.js";
 import * as repo from "../repositories/customer-identity-repository.js";
 
 const status=z.enum(["NOT_SUBMITTED","FORMAT_VALID","VERIFICATION_PENDING","VERIFIED","VERIFICATION_FAILED","REVIEW_REQUIRED"]);
+const sourceTimestamp=z.iso.datetime().refine(
+  value=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value),
+  {message:"Source event timestamps must use UTC millisecond precision, for example 2026-08-24T20:01:00.123Z."}
+);
 const syncSchema=z.object({
   externalReference:z.string().trim().min(1).max(160),
   phone:z.string().trim().max(40).nullable().optional(),
@@ -29,7 +33,7 @@ const syncSchema=z.object({
   serviceAccessPolicyVersion:z.string().trim().max(80).nullable().optional(),
   serviceAccessSource:z.enum(["NOLI","CPAY"]).optional(),
   source:z.enum(["NOLI","CPAY"]),
-  sourceUpdatedAt:z.iso.datetime()
+  sourceUpdatedAt:sourceTimestamp
 }).superRefine((value,ctx)=>{
   if(value.identityNumberMask && !isSafeIdentityMask(value.identityNumberMask)){
     ctx.addIssue({code:"custom",message:"Only strongly masked identity values with at most four visible characters may be synchronized."});
@@ -48,7 +52,7 @@ const capabilityItem=z.object({
   supportedCountries:z.array(z.string().trim().length(2).transform(v=>v.toUpperCase())).max(250),
   source:z.enum(["CPAY","CONFIG"]),
   sourceReference:z.string().trim().max(255).nullable().optional(),
-  sourceUpdatedAt:z.iso.datetime()
+  sourceUpdatedAt:sourceTimestamp
 });
 const capabilitySyncSchema=z.object({capabilities:z.array(capabilityItem).max(100)});
 
